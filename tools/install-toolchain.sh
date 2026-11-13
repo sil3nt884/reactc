@@ -35,7 +35,7 @@ packages='
   libisl23 libmpc3 libmpfr6 libgmp10 zlib1g libzstd1
   binutils-mingw-w64-x86-64 gcc-mingw-w64-base gcc-mingw-w64-x86-64-posix
   gcc-mingw-w64-x86-64-posix-runtime g++-mingw-w64-x86-64-posix mingw-w64-common mingw-w64-x86-64-dev
-  cmake cmake-data make ninja-build libarchive13t64 libjsoncpp26 librhash1 libuv1t64
+  cmake cmake-data make ninja-build libarchive13t64 libjsoncpp26 librhash1 libuv1t64 libxml2-16 libexpat1
   libuv1-dev libssl-dev zlib1g-dev libbrotli-dev libbrotli1 libzstd-dev
 '
 

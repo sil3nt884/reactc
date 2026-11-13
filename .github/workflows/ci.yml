@@ -62,6 +62,8 @@ jobs:
           path: tools
           key: tools-${{ hashFiles('tools/install-*.sh', 'scripts/ci/install-tools.sh', 'toolchain.json') }}
       - run: sh scripts/ci/install-tools.sh --system
+      # the toolchain's cc also links Rust build scripts (the container has no system C compiler)
+      - run: echo "$PWD/tools/local/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
