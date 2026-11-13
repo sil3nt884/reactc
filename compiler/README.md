@@ -1,7 +1,10 @@
 # reactc
 
-A Rust command-line compiler that turns a React (TSX) app into a native
-executable.
+The reactc command: the Rust front end and driver of the toolchain. It bundles
+and transforms a React (TSX) app or a Node server, hands it to Porffor for C,
+and compiles and links that C with reactc's runtime into a native executable.
+See [What kind of tool is it?](../README.md#what-kind-of-tool-is-it) for the
+stages.
 
 ```text
 TSX ─► React Compiler ─► oxc ─► rolldown ─► Porffor ─► C ─► executable
