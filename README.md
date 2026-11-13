@@ -1,25 +1,49 @@
 # reactc
 
-reactc compiles React (TSX/JSX) user interfaces and Node servers into native
-executables for Windows and Linux. It is built on
-[Porffor](https://github.com/CanadaHonk/porffor): JavaScript becomes C, and C
-becomes a native program. No JavaScript engine runs in what it produces.
+reactc is an ahead-of-time build toolchain and native runtime for React and
+Node.js apps. You write a React UI, a Node server, or both, in TypeScript or
+JavaScript. reactc turns them into standalone programs for Windows, Linux or
+WebAssembly. There is no browser and no JavaScript engine inside the result:
+your code becomes machine code.
 
-- **UIs** become native windows rendered with Skia on Windows, or a protocol
-  core on Linux.
-- **Servers** (`node:http`, `fs`, `net`, `crypto`, `child_process`, `zlib`
-  and more) become console executables.
+- **UIs** become native windows: Win32 with a Skia renderer on Windows, a Tk
+  or Skia host on Linux.
+- **Servers** (`node:http`, `fs`, `net`, `crypto`, `child_process`, `zlib`,
+  `worker_threads` and more) become console executables.
 - **Threads.** [`@reactc/threads`](packages/reactc-threads/README.md) gives you
-  Java-style and functional threads on one shared heap. `run()` can be async,
-  and threads can be awaited like promises.
+  real parallel threads on one shared heap, in Java style or functional style.
+  `run()` can be async, and a thread can be awaited like a promise.
 - **Projects.** `reactc new` creates a Node + React project that builds with
   `npm run build`.
 
 What does not work yet is listed in [docs/LIMITS.md](docs/LIMITS.md).
 
+## What kind of tool is it?
+
+reactc works like a compiler driver: the way `clang` runs a preprocessor,
+compiler and linker for you, reactc runs every stage from TSX to an
+executable, and adds the runtime your app needs.
+
+1. **Front end (reactc, in Rust).** reactc bundles your code with rolldown,
+   parses and transforms it with oxc, and optionally runs the React Compiler.
+   It lowers JSX and hooks onto its page runtime, compiles CSS to native style
+   rules, and replaces Node built-ins with native implementations: Windows
+   paths, `fetch`, worker threads. With `@reactc/threads`, it also applies the
+   shared-heap transform.
+2. **JavaScript to C.** [Porffor](https://github.com/CanadaHonk/porffor)
+   compiles the bundle to C.
+3. **C to a native program.** GCC (Linux), MinGW-w64 (Windows) or the WASI SDK
+   (WebAssembly) compile that C. It is linked with reactc's runtime: the window
+   host and renderer, libuv, uWebSockets and OpenSSL for Node APIs, and the
+   thread runtimes.
+
+So reactc is not a single compiler, and not a JavaScript engine or a browser
+shell. It is a compilation toolchain plus the native runtime the compiled app
+runs on.
+
 ## Download
 
-Each [release](../../releases) has the packaged compiler:
+Each [release](../../releases) has the packaged toolchain:
 
 - `reactc-windows-x64.zip`: `bin/reactc.exe`. Builds run the bundled C
   toolchain through WSL with Ubuntu 26.04. The programs it produces need no
@@ -46,7 +70,7 @@ npm run build          # Windows executables on Windows, Linux executables on Li
 - [`@reactc/ui`](packages/reactc-ui/README.md): React layout, controls and
   window chrome for native apps.
 
-Projects made by `reactc new` depend on both through the compiler that created
+Projects made by `reactc new` depend on both through the reactc that created
 them. Elsewhere, install them from npm or from a release:
 
 ```sh
@@ -76,7 +100,7 @@ npm run setup            # checks the above, then installs the toolchain into to
 npm run build:compiler   # builds reactc and packages it in dist/reactc
 ```
 
-`dist/reactc` is the compiler: `bin/reactc(.exe)` with everything it needs.
+`dist/reactc` is the toolchain: `bin/reactc(.exe)` with everything it needs.
 Add `bin` to PATH and run `reactc new my-app`. `npm run setup` keeps
 already-installed tools, so rerunning it is quick.
 [tools/README.md](tools/README.md) lists what each installer adds.
