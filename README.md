@@ -13,6 +13,9 @@ your code becomes machine code.
 - **Threads.** [`@reactc/threads`](packages/reactc-threads/README.md) gives you
   real parallel threads on one shared heap, in Java style or functional style.
   `run()` can be async, and a thread can be awaited like a promise.
+- **Native libraries.** [`@reactc/native`](packages/reactc-native/README.md)
+  calls functions in any `.dll` or `.so` with a C ABI. Signatures are declared
+  in JavaScript, and JS objects, strings and callbacks are converted.
 - **Projects.** `reactc new` creates a Node + React project that builds with
   `npm run build`.
 
@@ -69,6 +72,8 @@ npm run build          # Windows executables on Windows, Linux executables on Li
   heap.
 - [`@reactc/ui`](packages/reactc-ui/README.md): React layout, controls and
   window chrome for native apps.
+- [`@reactc/native`](packages/reactc-native/README.md): call any native library
+  with a C ABI from JavaScript, with structs, strings, buffers and callbacks.
 
 Projects made by `reactc new` depend on both through the reactc that created
 them. Elsewhere, install them from npm or from a release:

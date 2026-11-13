@@ -49,6 +49,7 @@ jobs:
         run: |
           npm pack --dry-run --workspace @reactc/threads
           npm pack --dry-run --workspace @reactc/ui
+          npm pack --dry-run --workspace @reactc/native
 
   native-linux:
     name: Native Linux build

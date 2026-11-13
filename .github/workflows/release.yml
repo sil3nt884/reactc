@@ -70,7 +70,7 @@ jobs:
           cd dist/release
           tar -czf reactc-linux-x64.tar.gz reactc-linux-x64
           zip -qry reactc-windows-x64.zip reactc-windows-x64
-          npm pack ../../packages/reactc-threads ../../packages/reactc-ui
+          npm pack ../../packages/reactc-threads ../../packages/reactc-ui ../../packages/reactc-native
           sha256sum reactc-linux-x64.tar.gz reactc-windows-x64.zip *.tgz > SHA256SUMS
           ls -la
       - uses: softprops/action-gh-release@v2
@@ -98,3 +98,4 @@ jobs:
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
           npm publish --workspace @reactc/threads --access public
           npm publish --workspace @reactc/ui --access public
+          npm publish --workspace @reactc/native --access public

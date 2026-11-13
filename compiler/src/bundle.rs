@@ -40,6 +40,8 @@ fn server_library(specifier: &str, windows: bool) -> Option<(&'static str, &'sta
         "reactc:clone" => Some(("reactc:clone", "node-threads/clone.js")),
         // Shared-heap threads; importing them builds the program with the shared heap.
         "reactc:threads" | "@reactc/threads" => Some(("reactc:threads", "../packages/reactc-threads/src/index.js")),
+        // Native library calls; importing them compiles the FFI runtime in.
+        "reactc:native" | "@reactc/native" => Some(("reactc:native", "../packages/reactc-native/src/index.js")),
         _ => None,
     }
 }
@@ -59,6 +61,8 @@ pub struct Report {
     pub threads: bool,
     /// The bundle imports @reactc/threads: one heap shared by every thread.
     pub shared_heap: bool,
+    /// The bundle imports @reactc/native: the FFI runtime is compiled in.
+    pub ffi: bool,
 }
 
 /// A path written into generated JavaScript as an import specifier.
@@ -77,6 +81,7 @@ struct Observed {
     workers: Mutex<Vec<PathBuf>>,
     threads: std::sync::atomic::AtomicBool,
     shared_heap: std::sync::atomic::AtomicBool,
+    ffi: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug)]
@@ -120,6 +125,13 @@ impl Plugin for NativePlugin {
                 }
             }
             return Ok(None);
+        }
+        // UI builds also get reactc's own libraries that need native code.
+        if args.specifier.starts_with(LIB_ID) {
+            return Ok(Some(HookResolveIdOutput::from_id(args.specifier)));
+        }
+        if matches!(args.specifier, "@reactc/native" | "reactc:native") {
+            return Ok(Some(HookResolveIdOutput::from_id(format!("{LIB_ID}reactc:native"))));
         }
         if let Some(module) = args.specifier.strip_prefix("node:") {
             if self.wasm && !matches!(module, "fs" | "fs/promises" | "stream") {
@@ -184,6 +196,7 @@ impl Plugin for NativePlugin {
                 .replace("from './clone.js'", &format!("from {}", serde_json::to_string(&format!("{LIB_ID}reactc:clone"))?));
             if name == "worker_threads" { self.seen.threads.store(true, Ordering::Relaxed); }
             if name == "reactc:threads" { self.seen.shared_heap.store(true, Ordering::Relaxed); }
+            if name == "reactc:native" { self.seen.ffi.store(true, Ordering::Relaxed); }
             self.seen.modules.lock().unwrap().push(relative.to_owned());
             return Ok(Some(HookLoadOutput { code: code.into(), module_type: Some(ModuleType::Js), ..Default::default() }));
         }
@@ -407,5 +420,6 @@ pub async fn bundle(options: &Options) -> Result<Report> {
         workers: seen.workers.lock().unwrap().clone(),
         threads: seen.threads.load(Ordering::Relaxed),
         shared_heap: seen.shared_heap.load(Ordering::Relaxed),
+        ffi: seen.ffi.load(Ordering::Relaxed),
     })
 }

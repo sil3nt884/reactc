@@ -87,6 +87,7 @@ copy('native', 'native');
 copy('host', 'host');
 copy('packages/reactc-ui', 'packages/reactc-ui');
 copy('packages/reactc-threads', 'packages/reactc-threads');
+copy('packages/reactc-native', 'packages/reactc-native');
 copy('templates', 'templates');
 
 // 3. Tools. The toolchain contains Linux symlinks and executables, so on

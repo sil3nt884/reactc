@@ -58,6 +58,8 @@ pub struct Options {
     pub worker_objects: Vec<PathBuf>,
     /// The bundle imports @reactc/threads: every thread shares one heap.
     pub shared_heap: bool,
+    /// The bundle imports @reactc/native: the FFI runtime is compiled in.
+    pub ffi: bool,
 }
 
 const USAGE: &str = "usage: reactc build [<entry>] [options]
@@ -168,6 +170,7 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
         worker: None,
         threads: false,
         shared_heap: false,
+        ffi: false,
         worker_objects: Vec::new(),
     })
 }
@@ -343,6 +346,10 @@ async fn build(options: &Options) -> Result<()> {
     let options = &mut options;
     options.threads = report.threads || !report.workers.is_empty();
     options.shared_heap = report.shared_heap;
+    options.ffi = report.ffi;
+    if options.ffi && options.target == Target::Wasm {
+        bail!("@reactc/native loads native libraries, which the WASI Preview 1 target cannot do");
+    }
     if options.shared_heap {
         if !options.server {
             bail!("@reactc/threads runs in server builds (UI entries keep a single JavaScript thread)");
@@ -402,6 +409,7 @@ async fn build(options: &Options) -> Result<()> {
         "workers": report.workers.iter().map(|path| path.to_string_lossy().replace('\\', "/")).collect::<Vec<_>>(),
         "threads": options.threads,
         "sharedHeap": options.shared_heap,
+        "nativeLibraries": options.ffi,
         "windowsFilesystem": (options.target == Target::Windows).then_some("native UTF-8 file and directory I/O subset with separate protocol stdio"),
         "windowsThreading": (options.target == Target::Windows).then_some(serde_json::json!({
             "window": "win32-message-loop",

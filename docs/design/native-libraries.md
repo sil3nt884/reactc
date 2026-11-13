@@ -1,6 +1,6 @@
 # Design: calling native libraries from JavaScript
 
-Status: proposal.
+Status: implemented as [`@reactc/native`](../../packages/reactc-native/README.md), with signatures declared at runtime rather than at build time. On x86-64, integer and floating arguments travel in separate register classes (System V) or fixed positions (Windows x64), so one generic C caller (src/reactc-ffi.h) serves every signature without per-function code generation or libffi. Callbacks use 64 assembly entry stubs that save the argument registers and dispatch to JavaScript. Verified on Windows and Linux with a test library (every integer width, floats, stack-spilling calls, UTF-8 strings, buffers, structs in and out, variadic calls, callbacks) and with system libraries (kernel32, msvcrt, libc, libm, qsort with a JS comparator). The original proposal follows.
 
 ## Goal
 

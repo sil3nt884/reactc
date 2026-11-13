@@ -35,9 +35,9 @@ What reactc does not do yet, kept current as the compiler grows. Details are in 
 
 ## npm packages and JavaScript
 
-- Packages with native addons cannot be compiled: `sqlite3`, `bcrypt`,
-  `sharp` and similar. Databases need a pure-JavaScript client (for example a
-  Postgres wire-protocol client) or a reactc-native binding.
+- Node packages with native addons (`sqlite3`, `bcrypt`, `sharp` and similar)
+  cannot be compiled as they are. Their underlying C libraries can be called
+  directly with [`@reactc/native`](../packages/reactc-native/README.md).
 - Porffor has no `eval`/`new Function`, and dynamic `require` with computed
   paths fails.
 - Worker and fork entries must be literal paths (`./file.js`).
@@ -72,6 +72,16 @@ What reactc does not do yet, kept current as the compiler grows. Details are in 
     tick, about 15.6 ms on Windows).
   - It rewrites Porffor alpha-22's C text, and fails loudly if Porffor's
     output changes.
+
+## Native libraries (`@reactc/native`)
+
+- **Platform.** x86-64 only; not available for the WebAssembly target.
+- **Call shape.** At most 32 arguments per call. Linux variadic calls take at
+  most 6 integer and 8 floating arguments.
+- **Structs by value.** Struct arguments and returns by value are not
+  supported (pass pointers).
+- **Callbacks.** At most 64 live callbacks, called on the JavaScript thread.
+- **Copies.** Buffers and strings are copied for each call.
 
 ## React UI (native renderer, not a browser)
 

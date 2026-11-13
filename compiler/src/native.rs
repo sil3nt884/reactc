@@ -86,6 +86,16 @@ fn porffor(options: &Options, input: &Path, c: &Path) -> Result<()> {
         .with_context(|| format!("Porffor could not compile {} to C", input.display()))
 }
 
+/// @reactc/native: the FFI runtime (src/reactc-ffi.h) goes into Porffor's C
+/// right after the jsval type it reads, so every target and entry has it.
+fn ffi_runtime(c: &Path) -> Result<()> {
+    let source = std::fs::read_to_string(c)?;
+    let marker = "} jsval;\n";
+    let at = source.find(marker).context("Porffor's C has no jsval type to attach the FFI runtime to")? + marker.len();
+    std::fs::write(c, format!("{}#include \"src/reactc-ffi.h\"\n{}", &source[..at], &source[at..]))?;
+    Ok(())
+}
+
 /// @reactc/threads: rewrites Porffor's C so every thread runs this program in
 /// one shared heap (src/reactc-shared-heap/transform.mjs). Porffor's output is
 /// kept as app.porffor.c.
@@ -216,6 +226,9 @@ pub fn emit(options: &Options, js: &Path) -> Result<Vec<&'static str>> {
     porffor(options, js, &c)?;
     if options.shared_heap {
         shared_heap(options, &c)?;
+    }
+    if options.ffi {
+        ffi_runtime(&c)?;
     }
     let original = std::fs::read_to_string(c)?;
     let source = without_unused_glue(original.clone())?;
@@ -615,7 +628,8 @@ fn link_windows(options: &Options) -> Result<PathBuf> {
     let prefix = std::env::var("WINDOWS_BIN_PREFIX").unwrap_or_else(|_| "x86_64-w64-mingw32-".into());
     let core_object = out.join("core.o");
     let resources_object = out.join("resources.o");
-    run(&options.root, &format!("{cc} -O2 -Wno-attributes {ada_include} {node_include} -c {} -o {}", tool(&entry)?, tool(&core_object)?))
+    // -I root: the core may include src/reactc-ffi.h
+    run(&options.root, &format!("{cc} -O2 -Wno-attributes -I{} {ada_include} {node_include} -c {} -o {}", tool(&options.root)?, tool(&entry)?, tool(&core_object)?))
         .context("the Windows C compiler could not compile the application core")?;
     run(&options.root, &format!(
         "{prefix}windres --preprocessor={cc} --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED -i {} -o {}",
