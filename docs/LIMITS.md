@@ -44,11 +44,12 @@ What reactc does not do yet, kept current as the compiler grows. Details are in 
 
 ## Node APIs
 
-- Covered: `fs`, `fs/promises`, `stream`, `net`, `child_process`, `zlib`,
-  `crypto` (including WebCrypto and scrypt), `http`, `https`, `path`, `url`,
-  `worker_threads`.
+- Covered: `fs`, `fs/promises`, `stream`, `net`, `dgram` (UDP, in servers and
+  UI apps), `child_process`, `zlib`, `crypto` (including WebCrypto and
+  scrypt), `http`, `https`, `path`, `url`, `worker_threads`.
+- `dgram` sends to numeric addresses and `localhost`, not other host names.
 - Not covered: `fs.watch`, links and `lstat` on Windows, ownership changes,
-  most of `http2` and `dgram`.
+  most of `http2`.
 - `fork()` children are threads in the same process. They share `pid`, the
   environment and the working directory, and `kill()` cannot interrupt a busy
   thread.

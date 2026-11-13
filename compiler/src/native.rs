@@ -96,6 +96,16 @@ fn ffi_runtime(c: &Path) -> Result<()> {
     Ok(())
 }
 
+/// node:dgram: the UDP runtime (src/reactc-dgram.h) goes into Porffor's C after
+/// its libuv backend, whose loop and byte helpers it uses.
+fn dgram_runtime(c: &Path) -> Result<()> {
+    let source = std::fs::read_to_string(c)?;
+    let marker = "static char *porf_uv_buf;\n";
+    let at = source.find(marker).context("node:dgram needs Porffor's libuv backend, which this program does not include")? + marker.len();
+    std::fs::write(c, format!("{}#include \"src/reactc-dgram.h\"\n{}", &source[..at], &source[at..]))?;
+    Ok(())
+}
+
 /// @reactc/threads: rewrites Porffor's C so every thread runs this program in
 /// one shared heap (src/reactc-shared-heap/transform.mjs). Porffor's output is
 /// kept as app.porffor.c.
@@ -229,6 +239,9 @@ pub fn emit(options: &Options, js: &Path) -> Result<Vec<&'static str>> {
     }
     if options.ffi {
         ffi_runtime(&c)?;
+    }
+    if options.dgram {
+        dgram_runtime(&c)?;
     }
     let original = std::fs::read_to_string(c)?;
     let source = without_unused_glue(original.clone())?;

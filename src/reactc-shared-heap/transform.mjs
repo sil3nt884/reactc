@@ -273,7 +273,7 @@ if (uvModule) {
 }
 // The uWS bridge calls request and event handlers straight from libuv
 // callbacks, inside the wait's safe region: they leave it for the call.
-for (const callback of ['porf_uws_on_request', 'porf_uws_on_event']) {
+for (const callback of ['porf_uws_on_request', 'porf_uws_on_event', 'reactc_udp_on_recv', 'reactc_udp_on_send', 'reactc_udp_on_close']) {
   const start = find(new RegExp(`^void ${callback}\\(`));
   if (start < 0) continue;
   let open = start;

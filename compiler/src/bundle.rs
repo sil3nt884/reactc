@@ -42,6 +42,8 @@ fn server_library(specifier: &str, windows: bool) -> Option<(&'static str, &'sta
         "reactc:threads" | "@reactc/threads" => Some(("reactc:threads", "../packages/reactc-threads/src/index.js")),
         // Native library calls; importing them compiles the FFI runtime in.
         "reactc:native" | "@reactc/native" => Some(("reactc:native", "../packages/reactc-native/src/index.js")),
+        // UDP sockets on libuv (Porffor has no node:dgram)
+        "dgram" => Some(("dgram", "node-net/dgram.js")),
         _ => None,
     }
 }
@@ -63,6 +65,8 @@ pub struct Report {
     pub shared_heap: bool,
     /// The bundle imports @reactc/native: the FFI runtime is compiled in.
     pub ffi: bool,
+    /// The bundle imports node:dgram: the UDP runtime is compiled in.
+    pub dgram: bool,
 }
 
 /// A path written into generated JavaScript as an import specifier.
@@ -82,6 +86,7 @@ struct Observed {
     threads: std::sync::atomic::AtomicBool,
     shared_heap: std::sync::atomic::AtomicBool,
     ffi: std::sync::atomic::AtomicBool,
+    dgram: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug)]
@@ -132,6 +137,9 @@ impl Plugin for NativePlugin {
         }
         if matches!(args.specifier, "@reactc/native" | "reactc:native") {
             return Ok(Some(HookResolveIdOutput::from_id(format!("{LIB_ID}reactc:native"))));
+        }
+        if matches!(args.specifier, "node:dgram" | "dgram") {
+            return Ok(Some(HookResolveIdOutput::from_id(format!("{LIB_ID}dgram"))));
         }
         if let Some(module) = args.specifier.strip_prefix("node:") {
             if self.wasm && !matches!(module, "fs" | "fs/promises" | "stream") {
@@ -197,6 +205,7 @@ impl Plugin for NativePlugin {
             if name == "worker_threads" { self.seen.threads.store(true, Ordering::Relaxed); }
             if name == "reactc:threads" { self.seen.shared_heap.store(true, Ordering::Relaxed); }
             if name == "reactc:native" { self.seen.ffi.store(true, Ordering::Relaxed); }
+            if name == "dgram" { self.seen.dgram.store(true, Ordering::Relaxed); }
             self.seen.modules.lock().unwrap().push(relative.to_owned());
             return Ok(Some(HookLoadOutput { code: code.into(), module_type: Some(ModuleType::Js), ..Default::default() }));
         }
@@ -421,5 +430,6 @@ pub async fn bundle(options: &Options) -> Result<Report> {
         threads: seen.threads.load(Ordering::Relaxed),
         shared_heap: seen.shared_heap.load(Ordering::Relaxed),
         ffi: seen.ffi.load(Ordering::Relaxed),
+        dgram: seen.dgram.load(Ordering::Relaxed),
     })
 }

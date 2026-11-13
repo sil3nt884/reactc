@@ -60,6 +60,8 @@ pub struct Options {
     pub shared_heap: bool,
     /// The bundle imports @reactc/native: the FFI runtime is compiled in.
     pub ffi: bool,
+    /// The bundle imports node:dgram: the UDP runtime is compiled in.
+    pub dgram: bool,
 }
 
 const USAGE: &str = "usage: reactc build [<entry>] [options]
@@ -171,6 +173,7 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
         threads: false,
         shared_heap: false,
         ffi: false,
+        dgram: false,
         worker_objects: Vec::new(),
     })
 }
@@ -347,6 +350,10 @@ async fn build(options: &Options) -> Result<()> {
     options.threads = report.threads || !report.workers.is_empty();
     options.shared_heap = report.shared_heap;
     options.ffi = report.ffi;
+    options.dgram = report.dgram;
+    if options.dgram && options.target == Target::Wasm {
+        bail!("node:dgram is unavailable for the WASI Preview 1 target");
+    }
     if options.ffi && options.target == Target::Wasm {
         bail!("@reactc/native loads native libraries, which the WASI Preview 1 target cannot do");
     }

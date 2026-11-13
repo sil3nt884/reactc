@@ -1,6 +1,6 @@
 # Design: native TCP and UDP streams, and fetch over them
 
-Status: proposal.
+Status: step 1 (UDP) is implemented: `node:dgram` on libuv (src/reactc-dgram.h, src/node-net/dgram.js), in servers and UI apps, verified on Windows and Linux. TLS streams and fetch over TCP are next.
 
 ## Goal
 
