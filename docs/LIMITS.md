@@ -18,6 +18,8 @@ What reactc does not do yet, kept current as the compiler grows. Details are in 
   through WSL. That WSL distribution needs a glibc at least as new as the
   sysroot's, so use Ubuntu 26.04. The executables reactc produces do not need
   WSL.
+- **Linux runtime.** Linux executables that use Node APIs link libuv as a
+  shared library: install `libuv1t64` (Ubuntu) on the machine that runs them.
 - **Targets.** Not covered: macOS, ARM64, Android, and the WASI target's Node
   APIs beyond `fs`/`stream`.
 - **Compile times** can be long. An Express server's C takes about 25 minutes

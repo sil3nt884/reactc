@@ -36,7 +36,7 @@ packages='
   binutils-mingw-w64-x86-64 gcc-mingw-w64-base gcc-mingw-w64-x86-64-posix
   gcc-mingw-w64-x86-64-posix-runtime g++-mingw-w64-x86-64-posix mingw-w64-common mingw-w64-x86-64-dev
   cmake cmake-data make ninja-build libarchive13t64 libjsoncpp26 librhash1 libuv1t64 libxml2-16 libexpat1
-  libuv1-dev libssl-dev zlib1g-dev libbrotli-dev libbrotli1 libzstd-dev
+  libuv1-dev libssl-dev libssl3t64 zlib1g-dev libbrotli-dev libbrotli1 libzstd-dev
 '
 
 work=$(mktemp -d)
@@ -77,6 +77,15 @@ find "$sysroot" -type l | while read -r link; do
         fi ;;
   esac
 done
+# A broken lib*.so development link would make the linker fall back to a static
+# archive (libcrypto.a then needs zstd and jitterentropy): a package is missing.
+# (GCC's optional runtimes, such as the sanitizers and OpenMP, are not used.)
+broken=$(find "$sysroot/usr/lib/x86_64-linux-gnu" -maxdepth 1 -name 'lib*.so' -xtype l)
+if [ -n "$broken" ]; then
+  echo "Development links with no library behind them (add the runtime package):" >&2
+  echo "$broken" >&2
+  exit 1
+fi
 find "$sysroot" -xtype l -delete
 
 # glibc's linker scripts (libc.so, libm.so) name absolute paths such as

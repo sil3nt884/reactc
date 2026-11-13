@@ -75,6 +75,8 @@ jobs:
           compiler/target/debug/reactc new dist/ci/app
           cd dist/ci/app
           npm run build:linux
+          # reactc's Linux servers link libuv dynamically, as Ubuntu installs it
+          apt-get install -y -qq libuv1t64 >/dev/null
           TASKS_FILE=memory ./dist/linux/server/TasksServer &
           for i in $(seq 1 50); do curl -fs http://127.0.0.1:5180/health && break; sleep 0.2; done
           curl -fs -X POST -H 'Content-Type: application/json' -d '{"title":"Write the report"}' http://127.0.0.1:5180/tasks
