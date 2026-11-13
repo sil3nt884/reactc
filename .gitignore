@@ -1,0 +1,15 @@
+node_modules/
+dist/
+scratch/
+compiler/target/
+__pycache__/
+*.pyc
+.venv*/
+.env
+.env.*
+!.env.example
+
+# tools/ is installed by tools/install-*.sh and scripts/ci/install-tools.sh
+tools/*
+!tools/README.md
+!tools/install-*.sh

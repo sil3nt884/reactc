@@ -1,0 +1,38 @@
+{
+  "name": "@reactc/threads",
+  "version": "0.1.0",
+  "description": "Java-style shared-memory threads for reactc-compiled programs",
+  "keywords": [
+    "threads",
+    "parallel",
+    "shared-memory",
+    "reactc",
+    "native"
+  ],
+  "homepage": "https://github.com/OWNER/reactc/tree/main/packages/reactc-threads#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/reactc.git",
+    "directory": "packages/reactc-threads"
+  },
+  "bugs": {
+    "url": "https://github.com/OWNER/reactc/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

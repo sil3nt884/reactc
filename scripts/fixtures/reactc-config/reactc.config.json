@@ -1,0 +1,18 @@
+{
+  "target": "windows",
+  "outDir": "../../../dist/reactc-config",
+  "root": "../../..",
+  "shared": ["shared"],
+  "server": {
+    "folders": ["server"],
+    "entry": "server/index.js",
+    "name": "GreetingServer"
+  },
+  "client": {
+    "folders": ["client"],
+    "entry": "client/App.jsx",
+    "name": "Greeting",
+    "title": "Greeting",
+    "httpOrigin": "http://127.0.0.1:5055"
+  }
+}

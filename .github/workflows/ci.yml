@@ -1,0 +1,91 @@
+# Checks every push and pull request: the compiler's unit tests on Linux and
+# Windows, the JavaScript tests and libraries, and native Linux builds of the
+# threads example and a generated Node + React project.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compiler:
+    name: Compiler (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+      - run: cargo test --locked --manifest-path compiler/Cargo.toml
+      - run: cargo build --release --locked --manifest-path compiler/Cargo.toml
+
+  javascript:
+    name: JavaScript tests and libraries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node scripts/check-thread-clone.mjs
+      - name: Template unit tests (libraries under Node)
+        working-directory: templates/node-react-app
+        run: npm install --no-audit --no-fund && npm test
+      - name: Libraries pack
+        run: |
+          npm pack --dry-run --workspace @reactc/threads
+          npm pack --dry-run --workspace @reactc/ui
+
+  native-linux:
+    name: Native Linux builds
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq git ca-certificates >/dev/null
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: tools
+          key: tools-${{ hashFiles('tools/install-*.sh', 'scripts/ci/install-tools.sh', 'toolchain.json') }}
+      - run: sh scripts/ci/install-tools.sh --system
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: compiler
+      - run: cargo build --locked --manifest-path compiler/Cargo.toml
+      - name: Threads example (shared heap)
+        run: |
+          compiler/target/debug/reactc build examples/threads/main.server.js --target host --name threads --outdir dist/ci/threads
+          dist/ci/threads/threads | tee dist/ci/threads.json
+          grep -q '"javaStyle": 41538' dist/ci/threads.json
+      - name: Async threads example
+        run: |
+          compiler/target/debug/reactc build examples/threads/async.server.js --target host --name async --outdir dist/ci/async
+          (cd dist/ci && ./async/async)
+      - name: Generated Node + React project (npm run build:linux)
+        run: |
+          export PATH="$PWD/tools/local/node-v22.16.0-linux-x64/bin:$PATH"
+          compiler/target/debug/reactc new dist/ci/app
+          cd dist/ci/app
+          npm run build:linux
+          TASKS_FILE=memory ./dist/linux/server/TasksServer &
+          for i in $(seq 1 50); do curl -fs http://127.0.0.1:5180/health && break; sleep 0.2; done
+          curl -fs -X POST -H 'Content-Type: application/json' -d '{"title":"Write the report"}' http://127.0.0.1:5180/tasks
+          curl -fs http://127.0.0.1:5180/summary | tee summary.json
+          grep -q '"total":1' summary.json

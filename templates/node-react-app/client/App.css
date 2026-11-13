@@ -1,0 +1,92 @@
+:root {
+  --page: #ffffff;
+  --text: #1f2328;
+  --muted: #59636e;
+  --accent: #2f6feb;
+  --line: #d0d7de;
+  --danger: #cf222e;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  background-color: var(--page);
+  color: var(--text);
+}
+
+.app h1 {
+  font-size: 26px;
+}
+
+.add-form,
+.filters {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+.add-form input {
+  flex: 1;
+}
+
+.add-form button {
+  width: 96px;
+  background-color: var(--accent);
+  color: #ffffff;
+  border: none;
+}
+
+.filters button {
+  width: 80px;
+}
+
+.filters button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.task {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.task:hover {
+  border-color: var(--accent);
+}
+
+.task-title {
+  flex: 1;
+}
+
+.task.done .task-title {
+  color: var(--muted);
+}
+
+.task button {
+  width: 96px;
+}
+
+.task button.icon {
+  width: 44px;
+}
+
+.error {
+  color: var(--danger);
+}
+
+.summary {
+  color: var(--muted);
+}

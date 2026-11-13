@@ -1,0 +1,23 @@
+{
+  "outDir": "dist",
+  "root": "../..",
+  "shared": [
+    "shared"
+  ],
+  "server": {
+    "folders": [
+      "server"
+    ],
+    "entry": "server/index.ts",
+    "name": "TasksServer"
+  },
+  "client": {
+    "folders": [
+      "client"
+    ],
+    "entry": "client/App.tsx",
+    "name": "Tasks",
+    "title": "Tasks",
+    "httpOrigin": "http://127.0.0.1:5180"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "porffor": {
+    "repository": "https://github.com/CanadaHonk/porffor",
+    "tag": "alpha-22",
+    "commitAbbreviation": "a081ebd",
+    "host": "linux-x64",
+    "asset": "porffor-linux-x64.tar.gz",
+    "sha256": "6bb23046ecc5dfddb6ba6d9136ba2e684519c1a02868f221609b60290cee4361"
+  },
+  "nativePath": "Porffor C output -> system C compiler",
+  "validatedTargets": [
+    "linux-x64-ui-description",
+    "linux-x64-native-page-tk",
+    "linux-x64-native-client-fixtures-tk",
+    "wasm32-wasip1-page-stdio"
+  ],
+  "plannedTargets": [
+    "android-native-ui",
+    "windows-platform-parity-and-installers"
+  ],
+  "experimentalHosts": [
+    "windows-x64-ui-with-wsl2-linux-core"
+  ],
+  "windowsDesktopValidated": true,
+  "wasmValidated": true,
+  "wasmToolchain": {
+    "wasiSdk": "30.0",
+    "wasmtime": "43.0.0",
+    "embeddedWasmtimeCApi": "50.0.1",
+    "embeddedRuntimeTargets": [
+      "linux-x86_64",
+      "android-arm64-api26"
+    ],
+    "buildHost": "Linux x86-64 or WSL",
+    "validationScope": "Page state and host-backed fetch; path-based filesystem, fs/promises and read streams in preopened directories"
+  },
+  "experimentalTargets": [
+    "windows-x64-native-stdio-pe",
+    "windows-x64-self-contained-client-skia"
+  ],
+  "windowsValidationScope": "Isolated single EXE: native Skia/Win32 editor, Unicode state/save through separately compiled synthetic host service, Client route traces; renderer/CSS/accessibility parity remains open",
+  "windowsBuildHost": "linux-x64 Porffor -> MinGW x64 GCC -> Windows PE",
+  "windowsStandalonePackage": true,
+  "nativeWindowsSkia": {
+    "package": "SkiaSharp.NativeAssets.Win32",
+    "version": "3.119.2",
+    "sourceCommit": "927041a58f130e0dd0562ba86cb4170989ad39e9",
+    "archiveSha256": "088e9d83e325c57f2dfaf6e7931b5de50137c5a94c2a403c2d44ae77183b4cd5",
+    "dllSha256": "8b097d433db94fe61aba85213184938fb36118afd542d33252dd83794fdd9afc",
+    "runtime": "embedded native C ABI library; no managed assembly or .NET runtime"
+  }
+}
