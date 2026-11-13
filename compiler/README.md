@@ -154,9 +154,15 @@ WASI builds write `app.wasi.c` and `wasi.c`. The manifest lists the generated
 C files. Add `--emit-c` to stop before linking. Use a separate output directory
 for each target.
 
-On Windows the Porffor and C compiler steps run through WSL, because the
-pinned Porffor release ships for Linux and macOS. The finished `.exe` needs
-neither WSL nor Node.
+On Windows the Porffor and C compiler steps run in one of two ways. With the
+native tools installed (`npm run setup -- --native`: `tools/mingw64` and
+`tools/porffor`), Windows targets build on Windows itself: Porffor runs from
+its source on Node (`src/porffor-node.mjs`; Node 22.15 or newer on PATH, or
+`REACTC_NODE`), and MinGW-w64 GCC compiles its C. Otherwise, and always for
+`--target host` and `--target wasm`, they run through WSL, where the pinned
+Porffor release and the Linux toolchain live. `REACTC_WSL=1` selects WSL even
+when the native tools are present. The finished `.exe` needs neither WSL nor
+Node.
 
 ## Separate UI and server programs
 

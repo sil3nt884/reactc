@@ -27,7 +27,8 @@ curl --fail --location --retry 3 \
   printf '%s  %s\n' \
     'd7fa5aea7b3805c91111231d1aaaeefc39ae20562a9f599e13c22471ee576b9f' singleheader.zip \
     'af0d7d2cef91fc243cf4ad98570b03d1f26f5e0227cad0f5f4a7376e2feb3160' LICENSE-MIT | sha256sum --check
-  python3 -m zipfile -e singleheader.zip .
+  # Git Bash on Windows (the WSL-free setup) has unzip and may lack python3.
+  if command -v unzip >/dev/null 2>&1; then unzip -q singleheader.zip; else python3 -m zipfile -e singleheader.zip .; fi
   "$cxx" $cxx_flags -std=c++20 -O2 -c ada.cpp -o ada.o
 )
 mkdir -p "$output"

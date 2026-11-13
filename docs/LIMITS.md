@@ -18,6 +18,11 @@ What reactc does not do yet, kept current as the compiler grows. Details are in 
   through WSL. That WSL distribution needs a glibc at least as new as the
   sysroot's, so use Ubuntu 26.04. The executables reactc produces do not need
   WSL.
+- **Windows without WSL.** `npm run setup -- --native` installs a native
+  MinGW-w64 GCC and Porffor's source, and Windows targets then build without
+  WSL (Node 22.15 or newer runs Porffor). Linux and WebAssembly targets are
+  not built this way. Its OpenSSL is a prebuilt 3.6 from MSYS2, not the
+  3.5 the WSL setup builds from source.
 - **Linux runtime.** Linux executables that use Node APIs link libuv as a
   shared library: install `libuv1t64` (Ubuntu) on the machine that runs them.
 - **Targets.** Not covered: macOS, ARM64, Android, and the WASI target's Node

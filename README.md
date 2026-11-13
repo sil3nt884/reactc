@@ -50,7 +50,8 @@ Each [release](../../releases) has the packaged toolchain:
 
 - `reactc-windows-x64.zip`: `bin/reactc.exe`. Builds run the bundled C
   toolchain through WSL with Ubuntu 26.04. The programs it produces need no
-  WSL.
+  WSL. (A package built from source after `npm run setup -- --native` needs
+  no WSL at all; see below.)
 - `reactc-linux-x64.tar.gz`: `bin/reactc`, for Linux x86-64 with a glibc at
   least as new as Ubuntu 26.04's.
 
@@ -94,6 +95,14 @@ scripts. You install only these:
 | [Rust](https://rustup.rs) | yes | yes |
 | Ubuntu 26.04 | as WSL: `wsl --install -d Ubuntu-26.04` | the system (or an `ubuntu:26.04` container) |
 | `curl git xz-utils python3 perl` | inside WSL (Ubuntu ships them) | `sudo apt-get install -y curl git xz-utils python3 perl` |
+
+**Windows without WSL.** To build only Windows programs, skip Ubuntu:
+install Node.js 22.15 or newer, Rust and [Git for Windows](https://git-scm.com),
+then run `npm run setup -- --native` in place of `npm run setup`. It installs
+a native MinGW-w64 GCC (`tools/mingw64`) and Porffor's source
+(`tools/porffor`), which reactc runs on Node. Linux (`--target host`) and
+WebAssembly targets still need the WSL setup; both setups can share a clone,
+and reactc then builds Windows programs natively.
 
 For the WebAssembly target, add `--wasm` to setup and to the build:
 `npm run setup -- --wasm`, then `npm run build:compiler -- --wasm` (about 640 MB more).

@@ -5,6 +5,10 @@ set -eu
 tool_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# Git Bash on Windows (the WSL-free setup): the native tools take Windows paths.
+if command -v cygpath >/dev/null 2>&1; then
+  work=$(cygpath -m "$work"); tool_dir=$(cygpath -m "$tool_dir")
+fi
 git init -q "$work/source"
 git -C "$work/source" fetch --quiet --depth=1 https://github.com/nghttp2/nghttp2.git 85e300c79fb6dbcfa9c1013215c8710c1c2cd3d2
 git -C "$work/source" checkout --quiet --detach FETCH_HEAD

@@ -6,7 +6,7 @@ case "${1:-}" in
   '') target=host; cc="${CC:-cc}"; cxx="${CXX:-c++}"; ar="${AR:-ar}" ;;
   --windows)
     target=win
-    cross=${WINDOWS_BIN_PREFIX:-x86_64-w64-mingw32-}
+    cross=${WINDOWS_BIN_PREFIX-x86_64-w64-mingw32-}
     cc="${WINDOWS_CC:-${cross}gcc}"; cxx="${WINDOWS_CXX:-${cross}g++}"; ar="${cross}ar"
     ;;
   *) echo 'Usage: sh tools/install-node-libs.sh [--windows]' >&2; exit 2 ;;
@@ -14,9 +14,15 @@ esac
 cc="$(command -v "$cc")"
 cxx="$(command -v "$cxx")"
 ar="$(command -v "$ar")"
+make="${MAKE:-make}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# Git Bash on Windows (the WSL-free setup): the native tools take Windows paths.
+if command -v cygpath >/dev/null 2>&1; then
+  work="$(cygpath -m "$work")"; tool_dir="$(cygpath -m "$tool_dir")"
+  cc="$(cygpath -m "$cc")"; cxx="$(cygpath -m "$cxx")"; ar="$(cygpath -m "$ar")"
+fi
 jobs="${JOBS:-4}"
 prefix="$work/install"
 mkdir -p "$prefix/lib" "$prefix/include" "$prefix/notices"
@@ -40,7 +46,6 @@ if [ "$target" = win ]; then
   checkout zlib https://github.com/madler/zlib.git 51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf
   checkout brotli https://github.com/google/brotli.git ed738e842d2fbdf2d6459e39267a633c4a9b2f5d
   checkout zstd https://github.com/facebook/zstd.git f8745da6ff1ad1e7bab384bd1f9d742439278e99
-  checkout openssl https://github.com/openssl/openssl.git 67b5686b4419b4cb8caa502711c41815f5279751
   windows_cmake "$work/uv" "$work/build-uv" -DLIBUV_BUILD_SHARED=OFF -DLIBUV_BUILD_TESTS=OFF
   cmake --build "$work/build-uv" --parallel "$jobs"
   cmake --install "$work/build-uv"
@@ -55,19 +60,28 @@ if [ "$target" = win ]; then
     -DZSTD_BUILD_PROGRAMS=OFF -DZSTD_BUILD_TESTS=OFF
   cmake --build "$work/build-zstd" --parallel "$jobs"
   cmake --install "$work/build-zstd"
-  (
-    cd "$work/openssl"
-    CC="$cc" AR="$ar" RANLIB="${cross}ranlib" perl Configure mingw64 --prefix="$prefix" --libdir=lib \
-      no-shared no-tests no-apps no-docs no-module no-quic
-    make -j "$jobs" build_libs
-    make install_dev
-  )
+  if [ -n "${OPENSSL_PREFIX:-}" ]; then
+    # A prebuilt static OpenSSL (the WSL-free Windows setup downloads one,
+    # since Git for Windows' perl cannot run OpenSSL's Configure).
+    cp -R "$OPENSSL_PREFIX/include/openssl" "$prefix/include/"
+    cp "$OPENSSL_PREFIX/lib/libssl.a" "$OPENSSL_PREFIX/lib/libcrypto.a" "$prefix/lib/"
+    cp "$OPENSSL_PREFIX/share/licenses/openssl/LICENSE" "$prefix/notices/openssl.txt"
+  else
+    checkout openssl https://github.com/openssl/openssl.git 67b5686b4419b4cb8caa502711c41815f5279751
+    (
+      cd "$work/openssl"
+      CC="$cc" AR="$ar" RANLIB="${cross}ranlib" perl Configure mingw64 --prefix="$prefix" --libdir=lib \
+        no-shared no-tests no-apps no-docs no-module no-quic
+      "$make" -j "$jobs" build_libs
+      "$make" install_dev
+    )
+    cp "$work/openssl/LICENSE.txt" "$prefix/notices/openssl.txt"
+  fi
   cp "$work/uv/LICENSE" "$prefix/notices/libuv.txt"
   cp "$work/uv/LICENSE-extra" "$prefix/notices/libuv-extra.txt"
   cp "$work/zlib/LICENSE" "$prefix/notices/zlib.txt"
   cp "$work/brotli/LICENSE" "$prefix/notices/brotli.txt"
   cp "$work/zstd/LICENSE" "$prefix/notices/zstd.txt"
-  cp "$work/openssl/LICENSE.txt" "$prefix/notices/openssl.txt"
 fi
 
 checkout porffor https://github.com/CanadaHonk/porffor.git a081ebd71177b898b2859298376e3191f088af32

@@ -4,6 +4,9 @@
 //   npm run setup
 //   npm run setup -- --wasm   also the WebAssembly target's tools (about 640 MB)
 //
+//   npm run setup -- --native Windows without WSL: Windows targets only
+//                             (see scripts/setup-native.mjs)
+//
 // Windows: needs Rust (cargo) and WSL with Ubuntu 26.04; the tools are
 // installed by running scripts/ci/install-tools.sh inside WSL.
 // Linux: needs Ubuntu 26.04 (or matching glibc) and Rust; runs it directly.
@@ -14,6 +17,11 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const windows = process.platform === 'win32';
+if (process.argv.includes('--native')) {
+  const { setupNative } = await import('./setup-native.mjs');
+  await setupNative();
+  process.exit(0);
+}
 const problems = [];
 const wasm = process.argv.includes('--wasm');
 const options = wasm ? ['--wasm'] : [];
@@ -28,7 +36,8 @@ if (windows) {
   const distro = run('wsl.exe', ['-e', 'sh', '-c', '. /etc/os-release && echo "$VERSION_ID"']);
   const version = (distro.stdout || '').replace(/\0/g, '').trim();
   if (distro.status !== 0) {
-    problems.push('WSL is not available: run "wsl --install -d Ubuntu-26.04" in an administrator PowerShell, restart, and finish the Ubuntu setup.');
+    problems.push('WSL is not available: run "wsl --install -d Ubuntu-26.04" in an administrator PowerShell, restart, and finish the Ubuntu setup. ' +
+      'To build only Windows programs without WSL, run "npm run setup -- --native" instead.');
   } else if (version !== '26.04') {
     problems.push(`WSL's default distribution is Ubuntu ${version || '(unknown)'}; reactc's toolchain needs Ubuntu 26.04. ` +
       'Install it with "wsl --install -d Ubuntu-26.04" and make it the default with "wsl --set-default Ubuntu-26.04".');

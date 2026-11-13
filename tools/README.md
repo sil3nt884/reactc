@@ -32,5 +32,21 @@ present:
 | `install-http2.sh [--windows]` | pinned static nghttp2 for Linux (`tools/http2-host`) and Windows (`tools/http2-win`) |
 | `install-skia-windows.sh` | `tools/skia-win`, the Skia library Windows UIs render with |
 
+## Windows without WSL
+
+`npm run setup -- --native` (`scripts/setup-native.mjs`) installs the tools
+for building Windows programs on Windows itself. It needs Git for Windows,
+whose `sh.exe` runs the same `install-*.sh` scripts:
+
+| Folder | Contents |
+| --- | --- |
+| `tools/mingw64` | MinGW-w64 GCC 15.3 (UCRT, POSIX threads), the [winlibs](https://winlibs.com) build, with cmake and ninja. SHA-256 pinned in the script |
+| `tools/porffor` | Porffor's source at the pinned commit. `src/porffor-node.mjs` runs it on Node; it emits the same C as the release binary |
+| `tools/node-win`, `ada-win`, `http2-win`, `skia-win` | the same libraries as above, built with `tools/mingw64`. A `.native` file marks them; folders the WSL setup built are rebuilt |
+
+OpenSSL is the exception: Git's perl cannot run its `Configure`, so the
+static libraries come from MSYS2's `mingw-w64-ucrt-x86_64-openssl` package
+(3.6.5, SHA-256 pinned). `tools/.download` keeps the downloaded archives.
+
 Executables built with `tools/local` need a glibc at least as new as Ubuntu
 26.04's, and so does the WSL distribution that runs it on Windows.

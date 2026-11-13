@@ -34,9 +34,10 @@ fn without_unused_glue(mut source: String) -> Result<String> {
     Ok(source)
 }
 
-/// The pinned Porffor release ships for Linux and macOS, so a Windows build
-/// runs it (and the C compilers) through WSL. This is a build-time dependency
-/// only; the produced executable does not need it.
+/// The pinned Porffor release ships for Linux and macOS, and the bundled C
+/// toolchain (tools/local) is a Linux one, so a Windows build machine runs
+/// them through WSL. This is a build-time dependency only; the produced
+/// executable does not need it.
 fn wsl_path(path: &Path) -> Result<String> {
     let text = path.to_string_lossy().replace('\\', "/");
     let mut chars = text.chars();
@@ -48,12 +49,79 @@ fn wsl_path(path: &Path) -> Result<String> {
     }
 }
 
+/// A Windows build machine needs no WSL to build Windows programs once the
+/// native tools are installed (`npm run setup -- --native`): MinGW-w64 in
+/// tools/mingw64, and Porffor's source in tools/porffor, which runs on Node.
+/// Linux and WebAssembly targets still use the Linux toolchain through WSL,
+/// and REACTC_WSL=1 selects it for Windows targets too.
+fn native_toolchain(options: &Options) -> bool {
+    cfg!(windows)
+        && options.target == Target::Windows
+        && std::env::var_os("REACTC_WSL").is_none()
+        && options.root.join("tools").join("mingw64").join("bin").join("gcc.exe").is_file()
+}
+
 fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-fn run(root: &Path, script: &str) -> Result<()> {
-    let output = if cfg!(windows) {
+/// Splits a command the way a shell would, for the commands this module
+/// writes: words, single-quoted text and escaped quotes. Anything else a
+/// shell would interpret is refused, since the native toolchain runs
+/// without one.
+fn shell_words(script: &str) -> Result<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut chars = script.chars();
+    while let Some(character) = chars.next() {
+        match character {
+            '\'' => {
+                let text = word.get_or_insert_with(String::new);
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(inner) => text.push(inner),
+                        None => bail!("unterminated quote in: {script}"),
+                    }
+                }
+            }
+            // a backslash escapes a quote; any other one belongs to a Windows path
+            '\\' if chars.clone().next() == Some('\'') => {
+                chars.next();
+                word.get_or_insert_with(String::new).push('\'');
+            }
+            ' ' | '\t' | '\n' => words.extend(word.take()),
+            '$' | '`' | '"' | '|' | '&' | ';' | '<' | '>' | '(' | ')' | '*' | '?' =>
+                bail!("this command needs a shell, which the native Windows toolchain does not use: {script}"),
+            other => word.get_or_insert_with(String::new).push(other),
+        }
+    }
+    words.extend(word);
+    Ok(words)
+}
+
+/// A build tool started directly on Windows: from tools/mingw64/bin when it
+/// is there (the compilers), otherwise from PATH (node).
+fn native_command(options: &Options, script: &str) -> Result<Command> {
+    let words = shell_words(script)?;
+    let (program, arguments) = words.split_first().context("empty build command")?;
+    let bin = options.root.join("tools").join("mingw64").join("bin");
+    let bundled = bin.join(format!("{program}.exe"));
+    let mut command = if bundled.is_file() { Command::new(bundled) } else { Command::new(program) };
+    let mut path = std::ffi::OsString::from(&bin);
+    if let Some(existing) = std::env::var_os("PATH") {
+        path.push(";");
+        path.push(existing);
+    }
+    command.args(arguments).current_dir(&options.root).env("PATH", path);
+    Ok(command)
+}
+
+fn run(options: &Options, script: &str) -> Result<()> {
+    let root = &options.root;
+    let output = if native_toolchain(options) {
+        native_command(options, script)?.output()
+    } else if cfg!(windows) {
         let root = wsl_path(root)?;
         let script = format!(
             "cd {} && export PATH=\"$PWD/tools/local/bin:$PATH\" && {script}",
@@ -63,7 +131,7 @@ fn run(root: &Path, script: &str) -> Result<()> {
     } else {
         Command::new("sh").arg("-c").arg(script).current_dir(root).output()
     }
-    .context("cannot start the native toolchain")?;
+    .with_context(|| format!("cannot start the native toolchain ({})", script.split(' ').next().unwrap_or_default()))?;
     if !output.status.success() {
         bail!(
             "native toolchain failed:\n{}{}",
@@ -74,15 +142,50 @@ fn run(root: &Path, script: &str) -> Result<()> {
     Ok(())
 }
 
+/// A path as the build tools see it, quoted for a command.
+fn tool(options: &Options, path: &Path) -> Result<String> {
+    Ok(shell_quote(&build_path(options, path)?))
+}
+
 /// A path as the build tools see it.
-fn tool(path: &Path) -> Result<String> {
-    Ok(shell_quote(&if cfg!(windows) { wsl_path(path)? } else { path.to_string_lossy().into_owned() }))
+fn build_path(options: &Options, path: &Path) -> Result<String> {
+    Ok(if native_toolchain(options) {
+        path.to_string_lossy().replace('\\', "/")
+    } else if cfg!(windows) {
+        wsl_path(path)?
+    } else {
+        path.to_string_lossy().into_owned()
+    })
+}
+
+/// A MinGW-w64 tool: under its own name in tools/mingw64, with the cross
+/// prefix on the Linux toolchain.
+fn mingw(options: &Options, name: &str) -> String {
+    if native_toolchain(options) { name.to_owned() } else { format!("x86_64-w64-mingw32-{name}") }
+}
+
+/// Node for the build scripts and, on the native Windows toolchain, Porffor.
+fn node(options: &Options) -> String {
+    if native_toolchain(options) {
+        shell_quote(&std::env::var("REACTC_NODE").unwrap_or_else(|_| "node".into()))
+    } else {
+        "node=$(ls tools/local/node-*/bin/node 2>/dev/null | head -n 1); node=${node:-node}; \"$node\"".to_owned()
+    }
 }
 
 fn porffor(options: &Options, input: &Path, c: &Path) -> Result<()> {
-    let porf = std::env::var("PORFFOR_BIN").unwrap_or_else(|_| "./tools/porf".into());
+    let porf = match std::env::var("PORFFOR_BIN") {
+        Ok(porf) => porf,
+        Err(_) if native_toolchain(options) => {
+            if !options.root.join("tools").join("porffor").join("runtime").join("index.js").is_file() {
+                bail!("Porffor's source is not installed in tools/porffor: run `npm run setup -- --native`");
+            }
+            format!("{} src/porffor-node.mjs", node(options))
+        }
+        Err(_) => "./tools/porf".into(),
+    };
     let flags = if options.target == Target::Wasm { " --no-gc" } else { "" };
-    run(&options.root, &format!("{porf} c{flags} {} -o {}", tool(input)?, tool(c)?))
+    run(options, &format!("{porf} c{flags} {} -o {}", tool(options, input)?, tool(options, c)?))
         .with_context(|| format!("Porffor could not compile {} to C", input.display()))
 }
 
@@ -112,9 +215,9 @@ fn dgram_runtime(c: &Path) -> Result<()> {
 fn shared_heap(options: &Options, c: &Path) -> Result<()> {
     let raw = options.outdir.join("app.porffor.c");
     std::fs::copy(c, &raw)?;
-    run(&options.root, &format!(
-        "node=$(ls tools/local/node-*/bin/node 2>/dev/null | head -n 1); node=${{node:-node}}; \"$node\" src/reactc-shared-heap/transform.mjs {} {}",
-        tool(&raw)?, tool(c)?,
+    run(options, &format!(
+        "{} src/reactc-shared-heap/transform.mjs {} {}",
+        node(options), tool(options, &raw)?, tool(options, c)?,
     )).context("could not build the shared heap for @reactc/threads")?;
     println!("shared heap: {}", c.display());
     Ok(())
@@ -361,7 +464,7 @@ fn ada_link_args(options: &Options, source: &str) -> Result<(String, String)> {
     if !object.is_file() || !ada.join("ada_c.h").is_file() {
         bail!("this program uses Porffor's URL library; run `sh tools/install-ada.sh{install_flag}`");
     }
-    Ok((format!("-I{}", tool(&ada)?), format!("{} {runtime}", tool(&object)?)))
+    Ok((format!("-I{}", tool(options, &ada)?), format!("{} {runtime}", tool(options, &object)?)))
 }
 
 fn link_wasm(options: &Options) -> Result<PathBuf> {
@@ -374,14 +477,14 @@ fn link_wasm(options: &Options) -> Result<PathBuf> {
     let source = std::fs::read_to_string(out.join("app.wasi.c"))?;
     let (ada_include, ada_libraries) = ada_link_args(options, &source)?;
     let executable = out.join(format!("{}.wasm", options.name));
-    run(&options.root, &format!(
+    run(options, &format!(
         "{} --target=wasm32-wasip1 -O0 -Wno-unknown-attributes \
          -mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false \
          -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_GETPID \
          -D_WASI_EMULATED_PROCESS_CLOCKS {ada_include} {} {ada_libraries} \
          -lsetjmp -lwasi-emulated-mman -lwasi-emulated-signal -lwasi-emulated-getpid \
          -lwasi-emulated-process-clocks -Wl,-z,stack-size=4194304 -o {}",
-        tool(&cc)?, tool(&out.join("wasi.c"))?, tool(&executable)?
+        tool(options, &cc)?, tool(options, &out.join("wasi.c"))?, tool(options, &executable)?
     )).context("WASI SDK could not link the application")?;
     Ok(executable)
 }
@@ -416,8 +519,8 @@ fn node_link_args(options: &Options, source: &str) -> Result<(String, String)> {
                 bail!("missing Windows {name}; run `sh tools/install-node-libs.sh --windows`");
             }
         }
-        compile_flags = format!("-I{} -D_WIN32_WINNT=0x0A00", tool(&include)?);
-        link_flags = format!("-L{}", tool(&lib)?);
+        compile_flags = format!("-I{} -D_WIN32_WINNT=0x0A00", tool(options, &include)?);
+        link_flags = format!("-L{}", tool(options, &lib)?);
     }
     if uws {
         let archive = lib.join("libusockets.a");
@@ -426,17 +529,17 @@ fn node_link_args(options: &Options, source: &str) -> Result<(String, String)> {
                 if windows { " --windows" } else { "" });
         }
         let cxx = if windows {
-            std::env::var("WINDOWS_CXX").unwrap_or_else(|_| "x86_64-w64-mingw32-g++".into())
+            std::env::var("WINDOWS_CXX").unwrap_or_else(|_| mingw(options, "g++"))
         } else {
             std::env::var("CXX").unwrap_or_else(|_| "c++".into())
         };
         let bridge = options.outdir.join(if windows { "porf_uws.windows.cpp" } else { "porf_uws.cpp" });
         let object = options.outdir.join("porf_uws.o");
-        run(&options.root, &format!(
+        run(options, &format!(
             "{cxx} -std=c++20 -O2 -fno-rtti -DUWS_NO_ZLIB -DUWS_HTTPRESPONSE_NO_WRITEMARK -DLIBUS_USE_LIBUV -DLIBUS_USE_OPENSSL -DPORF_UWS_SSL {compile_flags} -I{} -I{} -c {} -o {}",
-            tool(&include.join("uws"))?, tool(&include.join("usockets"))?, tool(&bridge)?, tool(&object)?
+            tool(options, &include.join("uws"))?, tool(options, &include.join("usockets"))?, tool(options, &bridge)?, tool(options, &object)?
         )).context("could not compile Porffor's uWebSockets bridge")?;
-        link_flags.push_str(&format!(" {} {} -lstdc++", tool(&object)?, tool(&archive)?));
+        link_flags.push_str(&format!(" {} {} -lstdc++", tool(options, &object)?, tool(options, &archive)?));
     }
     if zlib { link_flags.push_str(" -lz -lbrotlienc -lbrotlidec -lbrotlicommon -lzstd"); }
     if ssl { link_flags.push_str(" -lssl"); }
@@ -457,8 +560,8 @@ fn node_link_args(options: &Options, source: &str) -> Result<(String, String)> {
         let http2 = options.root.join("tools").join(if windows { "http2-win" } else { "http2-host" });
         let archive = http2.join("lib/libnghttp2.a");
         if !archive.is_file() { bail!("missing nghttp2; run `npm run setup`"); }
-        compile_flags.push_str(&format!(" -I{}", tool(&http2.join("include"))?));
-        link_flags.push_str(&format!(" {}", tool(&archive)?));
+        compile_flags.push_str(&format!(" -I{}", tool(options, &http2.join("include"))?));
+        link_flags.push_str(&format!(" {}", tool(options, &archive)?));
     }
     Ok((compile_flags, link_flags))
 }
@@ -497,24 +600,27 @@ pub fn compile_worker(options: &Options) -> Result<PathBuf> {
     let (ada_include, _) = ada_link_args(options, &source)?;
     let (node_include, _) = node_link_args(options, &source)?;
     let cc = if windows {
-        std::env::var("WINDOWS_CC").unwrap_or_else(|_| "x86_64-w64-mingw32-gcc".into())
+        std::env::var("WINDOWS_CC").unwrap_or_else(|_| mingw(options, "gcc"))
     } else {
         std::env::var("CC").unwrap_or_else(|_| "cc".into())
     };
     let object = out.join("worker.o");
     let local = out.join(format!("worker-{index}.o"));
-    run(&options.root, &format!("{cc} -O2 -Wno-attributes -c -I{} {ada_include} {node_include} {} -o {}",
-        tool(&options.root)?, tool(&out.join("worker.c"))?, tool(&object)?))
+    run(options, &format!("{cc} -O2 -Wno-attributes -c -I{} {ada_include} {node_include} {} -o {}",
+        tool(options, &options.root)?, tool(options, &out.join("worker.c"))?, tool(options, &object)?))
         .context("the C compiler could not compile the worker program")?;
-    let objcopy = if windows {
-        "x86_64-w64-mingw32-objcopy".to_owned()
+    let library_path = "LD_LIBRARY_PATH=\"$PWD/tools/local/sysroot/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\"";
+    let objcopy = if native_toolchain(options) {
+        "objcopy".to_owned()
+    } else if windows {
+        format!("{library_path} x86_64-w64-mingw32-objcopy")
     } else {
         // The bundled sysroot's binutils, unless the system provides objcopy.
-        "\"$(command -v objcopy || echo \"$PWD/tools/local/sysroot/usr/bin/x86_64-linux-gnu-objcopy\")\"".to_owned()
+        format!("{library_path} \"$(command -v objcopy || echo \"$PWD/tools/local/sysroot/usr/bin/x86_64-linux-gnu-objcopy\")\"")
     };
-    run(&options.root, &format!(
-        "LD_LIBRARY_PATH=\"$PWD/tools/local/sysroot/usr/lib/x86_64-linux-gnu${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}\" {objcopy} --keep-global-symbol=reactc_worker_main_{index} {} {}",
-        tool(&object)?, tool(&local)?))
+    run(options, &format!(
+        "{objcopy} --keep-global-symbol=reactc_worker_main_{index} {} {}",
+        tool(options, &object)?, tool(options, &local)?))
         .context("objcopy could not isolate the worker program's symbols")?;
     Ok(local)
 }
@@ -540,10 +646,10 @@ fn thread_link_args(options: &Options, main_libraries: &str) -> Result<(String, 
             }
         }
     }
-    let mut objects = tool(&options.outdir.join("threads.c"))?;
+    let mut objects = tool(options, &options.outdir.join("threads.c"))?;
     for object in &options.worker_objects {
         objects.push(' ');
-        objects.push_str(&tool(object)?);
+        objects.push_str(&tool(options, object)?);
     }
     let mut libraries = extra.join(" ");
     if !windows { libraries.push_str(" -pthread"); }
@@ -561,8 +667,8 @@ fn link_host(options: &Options) -> Result<PathBuf> {
     let (ada_include, ada_libraries) = ada_link_args(options, &source)?;
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".into());
     let (thread_objects, thread_libraries) = thread_link_args(options, &format!("{ada_libraries} {node_libraries}"))?;
-    run(&options.root, &format!("{cc} -O2 -Wno-attributes -I{} {ada_include} {node_include} {} {thread_objects} {ada_libraries} {node_libraries} {thread_libraries} -lm -o {}",
-        tool(&options.root)?, tool(&host)?, tool(&executable)?))
+    run(options, &format!("{cc} -O2 -Wno-attributes -I{} {ada_include} {node_include} {} {thread_objects} {ada_libraries} {node_libraries} {thread_libraries} -lm -o {}",
+        tool(options, &options.root)?, tool(options, &host)?, tool(options, &executable)?))
         .context("the C compiler could not link the application")?;
     Ok(executable)
 }
@@ -608,12 +714,12 @@ fn link_windows_server(options: &Options) -> Result<PathBuf> {
         out.join(format!("{}-NOTICES.txt", options.name)),
         windows_library_notices(options, &source, !ada_libraries.is_empty())?,
     )?;
-    let cc = std::env::var("WINDOWS_CC").unwrap_or_else(|_| "x86_64-w64-mingw32-gcc".into());
+    let cc = std::env::var("WINDOWS_CC").unwrap_or_else(|_| mingw(options, "gcc"));
     let executable = out.join(format!("{}.exe", options.name));
     let (thread_objects, thread_libraries) = thread_link_args(options, &format!("{ada_libraries} {node_libraries}"))?;
-    run(&options.root, &format!(
+    run(options, &format!(
         "{cc} -O2 -static -Wno-attributes -I{} {ada_include} {node_include} {} {thread_objects} {ada_libraries} {node_libraries} {thread_libraries} -lshell32 -ladvapi32 -lbcrypt -lm -o {}",
-        tool(&options.root)?, tool(&out.join("server.c"))?, tool(&executable)?
+        tool(options, &options.root)?, tool(options, &out.join("server.c"))?, tool(options, &executable)?
     ))
     .context("could not link the Windows server executable")?;
     Ok(executable)
@@ -663,30 +769,28 @@ fn link_windows(options: &Options) -> Result<PathBuf> {
     let notices_path = out.join("notices.txt");
     std::fs::write(&notices_path, notices)?;
     // windres runs in the build environment, so resource paths use its spelling.
-    let resource_path = |path: &Path| -> Result<String> {
-        Ok(if cfg!(windows) { wsl_path(path)? } else { path.to_string_lossy().into_owned() })
-    };
+    let resource_path = |path: &Path| build_path(options, path);
     let resources_rc = out.join("resources.rc");
     std::fs::write(
         &resources_rc,
         format!("101 RCDATA \"{}\"\n102 RCDATA \"{}\"\n", resource_path(&library)?, resource_path(&notices_path)?),
     )?;
-    let cc = std::env::var("WINDOWS_CC").unwrap_or_else(|_| "x86_64-w64-mingw32-gcc".into());
-    let prefix = std::env::var("WINDOWS_BIN_PREFIX").unwrap_or_else(|_| "x86_64-w64-mingw32-".into());
+    let cc = std::env::var("WINDOWS_CC").unwrap_or_else(|_| mingw(options, "gcc"));
+    let prefix = std::env::var("WINDOWS_BIN_PREFIX").unwrap_or_else(|_| mingw(options, ""));
     let core_object = out.join("core.o");
     let resources_object = out.join("resources.o");
     // -I root: the core may include src/reactc-ffi.h
-    run(&options.root, &format!("{cc} -O2 -Wno-attributes -I{} {ada_include} {node_include} -c {} -o {}", tool(&options.root)?, tool(&entry)?, tool(&core_object)?))
+    run(options, &format!("{cc} -O2 -Wno-attributes -I{} {ada_include} {node_include} -c {} -o {}", tool(options, &options.root)?, tool(options, &entry)?, tool(options, &core_object)?))
         .context("the Windows C compiler could not compile the application core")?;
-    run(&options.root, &format!(
+    run(options, &format!(
         "{prefix}windres --preprocessor={cc} --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED -i {} -o {}",
-        tool(&resources_rc)?, tool(&resources_object)?
+        tool(options, &resources_rc)?, tool(options, &resources_object)?
     ))
     .context("could not embed Skia into the executable")?;
     let executable = out.join(format!("{}.exe", options.name));
-    run(&options.root, &format!(
-        "{cc} -O2 -static -municode -mwindows -Wno-attributes -I{} {} {} {} {ada_libraries} {node_libraries} -luser32 -lgdi32 -lcomdlg32 -lshell32 -lshlwapi -ladvapi32 -lwinhttp -lbcrypt -lm -o {}",
-        tool(&options.root)?, tool(&host)?, tool(&core_object)?, tool(&resources_object)?, tool(&executable)?
+    run(options, &format!(
+        "{cc} -O2 -static -municode -mwindows -Wno-attributes -D_WIN32_WINNT=0x0A00 -I{} {} {} {} {ada_libraries} {node_libraries} -luser32 -lgdi32 -lcomdlg32 -lshell32 -lshlwapi -ladvapi32 -lwinhttp -lbcrypt -lm -o {}",
+        tool(options, &options.root)?, tool(options, &host)?, tool(options, &core_object)?, tool(options, &resources_object)?, tool(options, &executable)?
     ))
     .context("could not link the application with its Skia host")?;
     Ok(executable)
@@ -695,6 +799,17 @@ fn link_windows(options: &Options) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn splits_commands_for_the_native_toolchain() {
+        let path = shell_quote("C:/My Apps/it's/app.c");
+        let words = shell_words(&format!("gcc -O2  -I{path} {path} -o 'out dir/app.exe'")).unwrap();
+        assert_eq!(words, ["gcc", "-O2", "-IC:/My Apps/it's/app.c", "C:/My Apps/it's/app.c", "-o", "out dir/app.exe"]);
+        assert_eq!(shell_words("node '' x").unwrap(), ["node", "", "x"]);
+        assert_eq!(shell_words(r"C:\tools\gcc.exe -c").unwrap(), [r"C:\tools\gcc.exe", "-c"]);
+        assert!(shell_words("node=$(ls tools) \"$node\" x").is_err());
+        assert!(shell_words("gcc 'unterminated").is_err());
+    }
 
     #[test]
     fn makes_file_scope_state_thread_local_in_workers() {

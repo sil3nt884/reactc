@@ -9,8 +9,8 @@
 //
 //   bin/reactc(.exe)   the compiler
 //   src/  native/      the page runtime and the Windows host compiled into apps
-//   tools/             Porffor, the C toolchain (run through WSL on Windows),
-//                      Skia and the native libraries
+//   tools/             Porffor, the C toolchain (run through WSL on Windows,
+//                      or the native MinGW-w64 one), Skia and the native libraries
 //   packages/reactc-ui, templates/node-react-app, README.md, VERSION.json
 //
 // --wasm also copies the WebAssembly toolchain (about 640 MB).
@@ -90,22 +90,51 @@ copy('packages/reactc-threads', 'packages/reactc-threads');
 copy('packages/reactc-native', 'packages/reactc-native');
 copy('templates', 'templates');
 
-// 3. Tools. The toolchain contains Linux symlinks and executables, so on
-// Windows it is copied inside WSL. Copies are incremental.
-const tools = ['porf', 'local', 'skia-win', 'node-win', 'ada-win', 'node-host', 'ada', 'http2-host', 'http2-win'];
-if (args.includes('--wasm')) tools.push('wasi-sdk', 'wasmtime', 'wasmtime-c-linux', 'ada-wasi');
+// 3. Tools. The Linux toolchain contains Linux symlinks and executables, so
+// on Windows it is copied inside WSL. Copies are incremental.
+// A Windows checkout set up with `npm run setup -- --native` has the native
+// tools (MinGW-w64, Porffor's source), which are plain Windows files. With
+// only those, the package builds Windows programs and needs no WSL.
+const nativeTools = windows && packageOs === 'windows' && existsSync(join(toolsDir, 'mingw64', 'bin', 'gcc.exe'))
+  ? ['mingw64', 'porffor'] : [];
+const linuxToolchain = nativeTools.length === 0 || existsSync(join(toolsDir, 'local'));
+const tools = linuxToolchain
+  ? ['porf', 'local', 'skia-win', 'node-win', 'ada-win', 'node-host', 'ada', 'http2-host', 'http2-win']
+  : ['skia-win', 'node-win', 'ada-win', 'http2-win'];
+if (linuxToolchain && args.includes('--wasm')) tools.push('wasi-sdk', 'wasmtime', 'wasmtime-c-linux', 'ada-wasi');
 // the Android runtime's C API is optional (it needs the Android NDK; see native/wasm/README.md)
-if (args.includes('--wasm') && existsSync(join(toolsDir, 'wasmtime-c-android'))) tools.push('wasmtime-c-android');
+if (linuxToolchain && args.includes('--wasm') && existsSync(join(toolsDir, 'wasmtime-c-android'))) tools.push('wasmtime-c-android');
+if (!linuxToolchain && args.includes('--wasm')) throw new Error('--wasm needs the Linux toolchain: run npm run setup -- --wasm (WSL)');
 for (const tool of tools) {
   if (!existsSync(join(toolsDir, tool))) throw new Error(`${join(toolsDir, tool)} is missing; run npm run setup (see tools/README.md)`);
 }
-console.log('Copying tools: ' + tools.join(', '));
-const sources = tools.map(tool => (windows ? wslPath(join(toolsDir, tool)) : join(toolsDir, tool)));
-const target = windows ? wslPath(join(out, 'tools')) : join(out, 'tools');
-const copyFlags = args.includes('--dereference') ? '-a -L -u' : '-a -u';
-const script = `mkdir -p ${quote(target)} && cp ${copyFlags} ${sources.map(quote).join(' ')} ${quote(target)}/`;
-if (windows) run('wsl.exe', ['-e', 'bash', '-c', script]);
-else run('sh', ['-c', script]);
+console.log('Copying tools: ' + [...tools, ...nativeTools].join(', '));
+if (linuxToolchain) {
+  const sources = tools.map(tool => (windows ? wslPath(join(toolsDir, tool)) : join(toolsDir, tool)));
+  const target = windows ? wslPath(join(out, 'tools')) : join(out, 'tools');
+  const copyFlags = args.includes('--dereference') ? '-a -L -u' : '-a -u';
+  const script = `mkdir -p ${quote(target)} && cp ${copyFlags} ${sources.map(quote).join(' ')} ${quote(target)}/`;
+  if (windows) run('wsl.exe', ['-e', 'bash', '-c', script]);
+  else run('sh', ['-c', script]);
+}
+for (const tool of [...(linuxToolchain ? [] : tools), ...nativeTools]) {
+  // the compiler is large and pinned: copied once
+  if (tool === 'mingw64' && existsSync(join(out, 'tools', 'mingw64', 'bin', 'gcc.exe'))) continue;
+  rmSync(join(out, 'tools', tool), { recursive: true, force: true });
+  cpSync(join(toolsDir, tool), join(out, 'tools', tool), {
+    recursive: true,
+    filter: source => !source.split(/[\\/]/).includes('.git'),
+  });
+}
+tools.push(...nativeTools);
+const requirements = nativeTools.length
+  ? 'Builds of Windows programs use the bundled MinGW-w64 toolchain (`tools/mingw64`) and\n' +
+    'run Porffor (`tools/porffor`) on Node 22.15 or newer, which must be on PATH (or\n' +
+    'named by `REACTC_NODE`). They need no WSL.' +
+    (linuxToolchain ? ' Linux targets run `tools/local` through WSL.' : '') +
+    '\nThe produced executables need neither WSL nor Node.'
+  : 'On Windows, builds run the bundled C toolchain (`tools/local`) through WSL\n' +
+    'with an Ubuntu distribution. The produced executables do not need WSL.';
 cpSync(join(checkout, 'tools', 'README.md'), join(out, 'tools', 'README.md'));
 
 // 4. Version and usage.
@@ -139,8 +168,7 @@ to see every option.
 
 ## Requirements
 
-On Windows, builds run the bundled C toolchain (\`tools/local\`) through WSL
-with an Ubuntu distribution. The produced executables do not need WSL.
+${requirements}
 
 reactc finds this folder from its executable. Set \`REACTC_HOME\` to use
 another copy, or \`--root\` / \`"root"\` for a single build.
