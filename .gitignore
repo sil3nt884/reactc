@@ -13,3 +13,4 @@ __pycache__/
 tools/*
 !tools/README.md
 !tools/install-*.sh
+*.log
