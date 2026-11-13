@@ -34,15 +34,8 @@ export default function App() {
   styles. The Windows host uses the resulting bounds for hit testing.
 
 The renderer determines which style properties are available. See the
-[compiler guide](../../compiler/README.md) and
-[greeting editor example](../../examples/reactc-ui.tsx).
+[compiler guide](../../compiler/README.md).
 
 ```sh
-reactc build examples/reactc-ui.tsx --target host --outdir dist/reactc-ui-rust-host
-reactc build examples/reactc-ui.tsx --target windows --name ReactcUiExample \
-  --title "Greeting editor" --outdir dist/reactc-ui-windows
-python3 scripts/check-reactc-ui.py dist/reactc-ui-rust-host/app \
-  --windows dist/reactc-ui-windows/ReactcUiExample.exe
+reactc build App.tsx --target windows --name MyApp --title "My app"
 ```
-
-Omit `--windows` when testing the native core without a Windows desktop.

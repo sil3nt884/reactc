@@ -66,6 +66,9 @@ scripts. You install only these:
 | Ubuntu 26.04 | as WSL: `wsl --install -d Ubuntu-26.04` | the system (or an `ubuntu:26.04` container) |
 | `curl git xz-utils python3 perl` | inside WSL (Ubuntu ships them) | `sudo apt-get install -y curl git xz-utils python3 perl` |
 
+For the WebAssembly target, add `--wasm` to setup and to the build:
+`npm run setup -- --wasm`, then `npm run build:compiler -- --wasm` (about 640 MB more).
+
 Then, from a clone (on Windows, on a drive letter such as `C:\src\reactc`):
 
 ```sh
@@ -82,38 +85,27 @@ The compiler alone builds with `cargo build --manifest-path compiler/Cargo.toml`
 It finds its runtime (`src/`, `native/`, `packages/`, `templates/`, `tools/`)
 next to itself, or through `REACTC_HOME` or `--root`.
 
-## Checks
+## Tests and CI
 
-| Command | What it checks |
-| --- | --- |
-| `npm test` | The worker message codec against Node's `structuredClone`; `path.win32` against Node |
-| `npm run test:compiler` | The compiler's unit tests |
-| `node scripts/check-reactc-shared-threads.mjs [--host]` | `@reactc/threads` programs, run repeatedly on Windows (and Linux): shared objects under garbage collection, async threads, file I/O, parallel speed |
-| `node scripts/check-reactc-threads.mjs [reactc] [--host]` | `worker_threads` and `fork` as native threads, against Node |
-| `node scripts/check-node-api-probe.mjs [reactc] [--host]` | Node API coverage, against Node |
-| `python scripts/check-node-react-app.py <project>/dist/windows` | A generated project's Windows GUI and server, end to end |
-| `python3 scripts/check-reactc-http.py compiler/target/debug/reactc` | Native `fetch` against a local service |
-
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the compiler
-tests on Windows and Linux, the JavaScript tests, and native Linux builds on
-every push. [`release.yml`](.github/workflows/release.yml) builds both
-packages and the library tarballs when a `v*` tag is pushed. It publishes the
-libraries to npm when the repository has an `NPM_TOKEN` secret.
+`npm test` runs the compiler's unit tests. CI
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs them on Windows
+and Linux, runs the template's tests, packs the libraries, and builds a
+generated Node + React project natively on Linux on every push.
+[`release.yml`](.github/workflows/release.yml) builds both packages and the
+library tarballs when a `v*` tag is pushed. It publishes the libraries to npm
+when the repository has an `NPM_TOKEN` secret.
 
 ## Repository layout
 
 ```
 compiler/      the reactc compiler (Rust)
 src/           runtime compiled into programs: page runtime, Node layers, thread runtimes
-native/        the Windows host (Win32 + Skia) and the WASI runtime
+native/        the Windows host (Win32 + Skia) and the WebAssembly runtime (native/wasm)
 packages/      @reactc/threads and @reactc/ui
 templates/     project templates for reactc new
-examples/      starter app, threads examples, UI examples
-apps/notes/    an upstream open-source Notes app, compiled unchanged (MIT)
-poc/           design notes and stress tests for the shared heap
-scripts/       packaging, CI and checks
+scripts/       setup, packaging and CI
 tools/         installers for the C toolchain and native libraries
-host/          a Python protocol host for running Linux UI cores
+host/          the Linux host (Tk or Skia) that runs Linux and WebAssembly UI builds
 ```
 
 ## Acknowledgements

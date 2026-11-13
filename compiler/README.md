@@ -27,10 +27,10 @@ layouts, fields, buttons, and a customizable Windows title bar.
 ```sh
 cargo build --locked --manifest-path compiler/Cargo.toml
 # JavaScript bundle only:
-./compiler/target/debug/reactc build examples/personal-details.tsx --outdir dist/reactc/page
+./compiler/target/debug/reactc build App.tsx --outdir dist/reactc/page
 # One self-contained Windows executable with the Skia renderer:
-./compiler/target/debug/reactc build examples/personal-details.tsx --outdir dist/reactc/windows \
-    --react-compiler --target windows --name PersonalDetails --title "Personal Details"
+./compiler/target/debug/reactc build App.tsx --outdir dist/reactc/windows \
+    --react-compiler --target windows --name MyApp --title "My App"
 ```
 
 `--target host` links a bare protocol program for the build machine, used by
@@ -103,8 +103,6 @@ maximize and close buttons, using the nodes `@reactc/ui` emits. It follows
 the root background's light or dark choice. The window then uses the custom
 frame: no system caption and no menu bar, and Licenses moves to the system menu.
 Host-target snapshots are unchanged.
-[`examples/default-controls.tsx`](../examples/default-controls.tsx)
-and `scripts/check-default-controls.py --windows` cover these defaults.
 
 ### Keyboard
 
@@ -136,9 +134,6 @@ Windows defaults:
 - A key replayed after the page's reply uses the modifiers captured when it
   was pressed, so a quick Ctrl+V still pastes.
 
-[`examples/keyboard-shortcuts.tsx`](../examples/keyboard-shortcuts.tsx),
-[`scripts/fixtures/reactc-window-keys`](../scripts/fixtures/reactc-window-keys/App.js) and
-`scripts/check-keyboard-shortcuts.py` cover these behaviours.
 `document.documentElement.setAttribute` updates attributes used by the root
 stylesheet selectors. `window`'s `online` and `offline` listeners reflect
 reachability observed by the configured native HTTP transport.
@@ -181,10 +176,8 @@ compiler/target/debug/reactc build ui/App.client.tsx --target windows \
 executable, `NAME.exe`, with its third-party notices in `NAME-NOTICES.txt`
 beside it. It is the default target when `reactc.exe` runs on Windows.
 `--target host` builds a program for the build machine; with the Windows
-build tool, that is a Linux executable built through WSL. The original
-Notes Express server runs as `OriginalNotesServer.exe` against the Windows
-Notes UI (`scripts/check-notes-windows-server.py`). A large server compiles
-slowly: the Express bundle spends about 25 minutes in one optimising C
+build tool, that is a Linux executable built through WSL. A large server
+compiles slowly: an Express bundle spends about 25 minutes in one optimising C
 compiler pass. Server compatibility depends
 on the Node APIs and dependencies supported by the pinned Porffor compiler.
 When a bundle imports `node:crypto` or `crypto`, `reactc` fills in missing
@@ -229,11 +222,8 @@ build one side.
 - Unknown keys are errors. Configured builds produce native output unless
   `native` is `false`; clients default to async page mode.
 
-[`scripts/fixtures/reactc-config`](../scripts/fixtures/reactc-config/reactc.config.json)
-builds a greeting server and client from one file
-(`scripts/check-reactc-config.py`), and
-[`scripts/fixtures/reactc-config-crossing`](../scripts/fixtures/reactc-config-crossing/reactc.config.json)
-is refused because its client imports server code.
+The [Node + React template](../templates/node-react-app/reactc.config.json)
+is a complete configured project.
 
 ## The Windows executable
 
@@ -252,17 +242,14 @@ Run with `--smoke` to paint one frame, save `native-app-smoke.bmp` and
 `native-app-smoke.json`, and exit. Set `REACTC_TIMING=1` to log per-step
 timings.
 
-On Windows, `python scripts/check-reactc-responsive.py compiler/target/debug/reactc.exe`
-checks startup, movement, painting, and close during HTTP and compiled CPU work.
-
 ### Draw the Windows title bar in TSX
 
-Import `WindowTitleBar` and `WindowButton` from `src/window-chrome.tsx`.
+Import `WindowTitleBar` and `WindowButton` from `@reactc/ui`.
 Keep the title bar as a direct child of the root layout and present in the
 initial snapshot. Build with `--target windows`.
 
 ```tsx
-import { WindowTitleBar, WindowButton } from './src/window-chrome.tsx';
+import { WindowTitleBar, WindowButton } from '@reactc/ui';
 
 export default function App() {
   return <main>
@@ -292,10 +279,6 @@ the window and use the window edges to resize. The maximize button also
 restores the window. Licenses is available in the system menu (`Alt+Space`)
 or through an optional `<WindowButton command="licenses" />`. Apps without
 `WindowTitleBar` use the standard frame.
-
-On Windows, run
-`python scripts/check-reactc-window-chrome.py compiler/target/debug/reactc.exe`
-to verify the Skia frame and Win32 controls.
 
 Title-bar styles use the native renderer's inline style subset. A
 `WindowButton` accepts numeric `padding` and per-side overrides, as well as
@@ -328,10 +311,9 @@ The compiled component, state, and callbacks use the same stdio page protocol.
 The existing Tk or Skia host can render it through Wasmtime.
 
 ```sh
-sh tools/install-wasm.sh
-compiler/target/debug/reactc build examples/personal-details.tsx \
-    --target wasm --outdir dist/reactc/personal-details-wasm
-python3 host/native_page.py --binary dist/reactc/personal-details-wasm/personal-details.wasm --demo --smoke
+npm run setup -- --wasm
+compiler/target/debug/reactc build App.tsx --target wasm --outdir dist/reactc/app-wasm
+python3 host/native_page.py --binary dist/reactc/app-wasm/App.wasm --demo --smoke
 ```
 
 Use `reactc.exe` when running the Windows compiler from WSL. It builds with
@@ -356,19 +338,9 @@ at build time. The WASI target uses a 64 MiB Porffor arena with garbage
 collection disabled. A browser renderer and browser-facing bindings remain
 separate work.
 
-Run `python3 scripts/check-reactc-wasm.py compiler/target/debug/reactc` to
-verify the supported WASI paths. The tests run the emitted WebAssembly in
-Wasmtime.
-
 For a standalone host that embeds Wasmtime, see the
 [Linux and Android runtime](../native/wasm/README.md). The Linux Tk/Skia host
 accepts it through `--wasm-runtime`.
-
-## Checks
-
-The repository's checks are listed in the [root README](../README.md#checks).
-They build real programs with reactc and run them natively on Windows and
-Linux.
 
 ## HTTP and Node APIs
 
@@ -392,9 +364,7 @@ resolve with their status, headers and body. Redirects are not followed,
 cookies are not kept, and streaming or binary bodies are outside this subset.
 The only accepted option besides `method`, `headers` and `body` is `cache`,
 because the host never caches. The Linux protocol host can serve it with
-`host/native_page.py --http`. `scripts/check-reactc-http.py` exercises it
-through the protocol core, and `scripts/check-reactc-fetch-windows.py`
-through the Windows host (WinHTTP).
+`host/native_page.py --http`; Windows apps use WinHTTP.
 
 `reactc` passes explicit `node:` imports for `fs`, `fs/promises`, `stream`,
 `net`, `child_process`, `zlib`, `crypto`, `http`, and `https` to Porffor
@@ -425,8 +395,7 @@ alongside), and `node:url`'s `fileURLToPath`/`pathToFileURL` use Windows
 file URLs. `crypto.scrypt`/`scryptSync` are implemented (RFC 7914). A server
 entry may use top-level `await`; reactc wraps the entry body in an async
 function and reports a rejection like Node (exit code 1). Exports from the
-entry are refused. `scripts/check-node-api-probe.mjs` runs a probe of these
-APIs natively on Windows (and Linux with `--host`) and under Node.
+entry are refused.
 
 ### Worker threads and fork
 
@@ -477,8 +446,6 @@ objects. Functions, symbols, `WeakMap`/`WeakSet` and promises throw a
 `DataCloneError` from `postMessage` or the `Worker` constructor. `fork()`
 children use Node's default JSON unless `serialization: 'advanced'` is
 passed, which gives them the same structured clone.
-`node scripts/check-thread-clone.mjs` compares the codec with Node's
-`structuredClone`.
 
 Limits: every thread has its own heap, so messages are always copies. A
 transfer list is accepted, but transferred buffers are copied, not
@@ -491,11 +458,8 @@ changes and working directory are the parent's. `terminate()` and `kill()`
 do not interrupt running code: they close the message channel, and the
 thread ends once its event loop has nothing left to do (a worker can listen
 for `parentPort`'s `close` event, a fork child for `disconnect`, and call
-`process.exit()`). A thread busy in a loop cannot be stopped from outside. Only reactc builds support this; the JS
-compiler does not. Set `REACTC_THREAD_TRACE=1` to log thread starts and
+`process.exit()`). A thread busy in a loop cannot be stopped from outside. Set `REACTC_THREAD_TRACE=1` to log thread starts and
 exits (and, on Linux, a backtrace if the process crashes).
-`node scripts/check-reactc-threads.mjs [reactc.exe] [--host]` builds
-`scripts/fixtures/threads` and compares the native report with Node's.
 
 ### Shared-memory threads (`@reactc/threads`)
 
@@ -520,17 +484,9 @@ and Linux targets, and the manifest records `"sharedHeap": true`. It cannot be
 combined with `worker_threads`/`fork` in one program. `run()` may be async:
 each thread runs its own event loop (timers, promise jobs and a libuv loop),
 and waiting in it is a safe region. A thread is also a promise (`await thread`,
-`Promise.all(threads)`). See [`examples/threads`](../examples/threads/README.md)
-for usage and the package README for all limits.
-`node scripts/check-reactc-shared-threads.mjs [reactc.exe] [--host]` builds
-and checks it.
-
-The native module check uses TCP loopback, a child executable, gzip and Brotli
-round trips, SHA-256 and WebCrypto, a native HTTP client and server, and HTTPS
-client certificate verification. Run it with
-`python3 scripts/check-reactc-node-modules.py compiler/target/debug/reactc --target host`
-on Linux. From WSL, use `compiler/target/debug/reactc.exe --target windows`
-as the script arguments to exercise the Windows PE.
+`Promise.all(threads)`). See the
+[package README](../packages/reactc-threads/README.md) for usage and limits.
+Set `REACTC_SHARED_TRACE=1` to log thread starts, joins and collections.
 
 ### Windows filesystem and streams
 
@@ -553,46 +509,6 @@ It also supports recursive `mkdir` and `rm`, `mkdtemp`, `chmod`/`fchmod`
 strings and UTF-8 byte arrays. Ownership changes, `lstat`, link operations
 and file watching are outside this coverage. Unsupported filesystem
 operations in the adapter return `ENOSYS`.
-
-From WSL, run
-`python3 scripts/check-reactc-windows-fs.py compiler/target/debug/reactc.exe`
-to compile and run a Windows executable that exercises these APIs.
-
-### Build the React/Express example
-
-The upstream `App.jsx` uses React hooks and `fetch('/api/message')`. Compile
-that component directly. Its browser bootstrap stays outside the build,
-the native renderer approximates its inline styles, and the original Express
-service runs separately on Node and returns the upstream sample message.
-
-```sh
-git clone https://github.com/akashdip2001/react-express-docker.git scratch/react-express-docker
-git -C scratch/react-express-docker checkout c1a87e1c6c5c1d2f4931d53a0353d2ef68488e2d
-npm --prefix scratch/react-express-docker/server install
-npm --prefix scratch/react-express-docker/server start
-```
-
-In a second terminal, use `compiler/target/debug/reactc` on Linux or
-`compiler/target/debug/reactc.exe` for the Windows build tool.
-
-```sh
-compiler/target/debug/reactc build scratch/react-express-docker/client/src/App.jsx \
-    --target host --http-origin http://127.0.0.1:4000 --outdir dist/reactc/react-express/host
-python3 host/native_page.py --binary dist/reactc/react-express/host/app --http
-
-compiler/target/debug/reactc build scratch/react-express-docker/client/src/App.jsx \
-    --target windows --http-origin http://127.0.0.1:4000 \
-    --outdir dist/reactc/react-express/windows --name ReactExpressDemo
-
-compiler/target/debug/reactc build scratch/react-express-docker/client/src/App.jsx \
-    --target wasm --http-origin http://127.0.0.1:4000 --outdir dist/reactc/react-express/wasm
-python3 host/native_page.py --binary dist/reactc/react-express/wasm/App.wasm --http
-```
-
-`python3 scripts/check-reactc-http.py compiler/target/debug/reactc` checks
-native HTTP against a local test service and verifies C emission for both
-targets. In WSL, add `--windows-smoke` to verify that a Windows app can render
-a connection error after logging it.
 
 ## Not done yet
 

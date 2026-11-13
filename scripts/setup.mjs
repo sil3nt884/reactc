@@ -2,6 +2,7 @@
 // prerequisites and installs every tool into tools/.
 //
 //   npm run setup
+//   npm run setup -- --wasm   also the WebAssembly target's tools (about 640 MB)
 //
 // Windows: needs Rust (cargo) and WSL with Ubuntu 26.04; the tools are
 // installed by running scripts/ci/install-tools.sh inside WSL.
@@ -14,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const windows = process.platform === 'win32';
 const problems = [];
+const wasm = process.argv.includes('--wasm');
+const options = wasm ? ['--wasm'] : [];
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', ...options });
 
 if (run('cargo', ['--version']).status !== 0) {
@@ -42,7 +45,7 @@ if (problems.length) {
 
 console.log('Installing tools into ' + resolve(root, 'tools') + ' (the first run downloads and builds about 2 GB; allow 20-40 minutes)...');
 const install = windows
-  ? run('wsl.exe', ['-e', 'sh', '-c', `cd '${wslRoot}' && sh scripts/ci/install-tools.sh`], { stdio: 'inherit' })
-  : run('sh', ['scripts/ci/install-tools.sh'], { cwd: root, stdio: 'inherit' });
+  ? run('wsl.exe', ['-e', 'sh', '-c', `cd '${wslRoot}' && sh scripts/ci/install-tools.sh ${options.join(' ')}`], { stdio: 'inherit' })
+  : run('sh', ['scripts/ci/install-tools.sh', ...options], { cwd: root, stdio: 'inherit' });
 if (install.status !== 0) process.exit(install.status ?? 1);
-console.log('\nSetup complete. Build the compiler with: npm run build:compiler');
+console.log('\nSetup complete. Build the compiler with: npm run build:compiler' + (wasm ? ' -- --wasm' : ''));

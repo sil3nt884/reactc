@@ -5,13 +5,22 @@
 # Windows targets, and Skia for Windows UIs. Already-installed tools are kept.
 #
 #   sh scripts/ci/install-tools.sh            # needs curl, git, xz, python3, perl
+#   sh scripts/ci/install-tools.sh --wasm     # also the WebAssembly target's tools (about 640 MB)
 #   sh scripts/ci/install-tools.sh --system   # as root: apt-get those first (CI)
 #
 # Most people run `npm run setup` instead, which calls this (inside WSL on
 # Windows).
 set -eu
 cd "$(dirname "$0")/../.."
-if [ "${1:-}" = "--system" ]; then
+system=''; wasm=''
+for argument in "$@"; do
+  case "$argument" in
+    --system) system=1 ;;
+    --wasm) wasm=1 ;;
+    *) echo "unknown option: $argument" >&2; exit 2 ;;
+  esac
+done
+if [ -n "$system" ]; then
   apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
     ca-certificates curl git xz-utils python3 perl zip unzip file >/dev/null
@@ -40,5 +49,12 @@ step() { echo; echo "== $*"; }
 [ -d tools/node-host ] || { step "Node native libraries for Linux (tools/node-host)"; sh tools/install-node-libs.sh; }
 [ -d tools/node-win ] || { step "Node native libraries for Windows (tools/node-win)"; sh tools/install-node-libs.sh --windows; }
 [ -d tools/skia-win ] || { step "Skia for Windows UIs (tools/skia-win)"; sh tools/install-skia-windows.sh; }
+if [ -n "$wasm" ]; then
+  [ -d tools/wasi-sdk ] && [ -d tools/wasmtime ] || { step "WASI SDK and Wasmtime (tools/wasi-sdk, tools/wasmtime)"; sh tools/install-wasm.sh; }
+  [ -d tools/ada-wasi ] || { step "URL parser for WebAssembly (tools/ada-wasi)"; sh tools/install-ada.sh --wasi; }
+  # the runtime that runs reactc --target wasm apps on Linux; it fetches the
+  # Wasmtime C API into tools/wasmtime-c-linux (Android: see native/wasm/README.md)
+  [ -d tools/wasmtime-c-linux ] || { step "WebAssembly runtime for Linux (native/wasm)"; sh native/wasm/build.sh linux; }
+fi
 echo
 echo "tools ready: $(ls tools | tr '\n' ' ')"

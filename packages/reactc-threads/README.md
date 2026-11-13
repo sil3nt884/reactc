@@ -117,5 +117,6 @@ TypeScript types are in `src/index.d.ts`.
 - **x86-64 only** for now.
 - **reactc only.** It runs only in reactc-compiled programs, not under Node.
 
-The design is described in [poc/shared-heap](../../poc/shared-heap/README.md),
-and the runtime is `src/reactc-shared-heap`.
+The runtime is in `src/reactc-shared-heap`: reactc rewrites Porffor's C so
+every thread runs the same program in one heap, with per-thread allocation,
+stop-the-world collection at safepoints and locks around structural changes.

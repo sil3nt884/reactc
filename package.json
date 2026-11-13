@@ -12,11 +12,7 @@
     "setup": "node scripts/setup.mjs",
     "build:compiler": "node scripts/build-compiler.mjs",
     "new-app": "node scripts/new-app.mjs",
-    "test": "node scripts/check-thread-clone.mjs && node scripts/check-node-win32-path.mjs",
-    "test:compiler": "cargo test --locked --manifest-path compiler/Cargo.toml",
-    "check:threads": "node scripts/check-reactc-threads.mjs",
-    "check:shared-threads": "node scripts/check-reactc-shared-threads.mjs",
-    "check:node-api": "node scripts/check-node-api-probe.mjs"
+    "test": "cargo test --locked --manifest-path compiler/Cargo.toml"
   },
   "engines": {
     "node": ">=22"

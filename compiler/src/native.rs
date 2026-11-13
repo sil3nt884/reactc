@@ -173,8 +173,8 @@ fn declares_static_variable(line: &str) -> bool {
 /// so each running instance of the same worker has its own runtime state.
 /// Text between `/* reactc:shared-begin */` and `/* reactc:shared-end */`
 /// (reactc's Windows adapters, which the shared thread pool also runs) stays
-/// shared. scripts/audit-worker-statics.mjs checks that thread-pool code does
-/// not touch Porffor's state.
+/// shared. Code that runs on the thread pool must not touch Porffor's
+/// state.
 fn thread_local_statics(source: &str) -> String {
     let mut out = String::with_capacity(source.len() + 32768);
     let mut scanner = CScanner { block_comment: false };

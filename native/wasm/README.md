@@ -6,11 +6,8 @@ writes versioned JSON frames to stdout. The runtime passes stdin, stdout and
 stderr through WASI Preview 1. It grants directory access only with
 `--dir HOST[::GUEST]` and keeps the host's environment outside the guest.
 
-This follows Chorium's separation of a portable app and a native Wasmtime
-host. Chorium's app uses its own WASI 0.2 component interfaces. This runner
-loads reactc's WASI Preview 1 command modules and uses the
-[page protocol](../../docs/page-protocol.md).
-[Chorium architecture](https://github.com/sil3nt884/browser/tree/main/chorium)
+The runner loads reactc's WASI Preview 1 command modules: the app sends JSON
+frames describing its page, and the host sends input and replies back.
 
 ## Linux
 

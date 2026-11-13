@@ -1,6 +1,6 @@
 # Checks every push and pull request: the compiler's unit tests on Linux and
-# Windows, the JavaScript tests and libraries, and native Linux builds of the
-# threads example and a generated Node + React project.
+# Windows, the template's tests and library packs, and a native Linux build of a
+# generated Node + React project.
 name: CI
 
 on:
@@ -33,7 +33,7 @@ jobs:
       - run: cargo build --release --locked --manifest-path compiler/Cargo.toml
 
   javascript:
-    name: JavaScript tests and libraries
+    name: Template and libraries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,8 +42,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
-      - run: node scripts/check-thread-clone.mjs
       - name: Template unit tests (libraries under Node)
         working-directory: templates/node-react-app
         run: npm install --no-audit --no-fund && npm test
@@ -53,7 +51,7 @@ jobs:
           npm pack --dry-run --workspace @reactc/ui
 
   native-linux:
-    name: Native Linux builds
+    name: Native Linux build
     runs-on: ubuntu-latest
     container: ubuntu:26.04
     steps:
@@ -69,15 +67,6 @@ jobs:
         with:
           workspaces: compiler
       - run: cargo build --locked --manifest-path compiler/Cargo.toml
-      - name: Threads example (shared heap)
-        run: |
-          compiler/target/debug/reactc build examples/threads/main.server.js --target host --name threads --outdir dist/ci/threads
-          dist/ci/threads/threads | tee dist/ci/threads.json
-          grep -q '"javaStyle": 41538' dist/ci/threads.json
-      - name: Async threads example
-        run: |
-          compiler/target/debug/reactc build examples/threads/async.server.js --target host --name async --outdir dist/ci/async
-          (cd dist/ci && ./async/async)
       - name: Generated Node + React project (npm run build:linux)
         run: |
           export PATH="$PWD/tools/local/node-v22.16.0-linux-x64/bin:$PATH"

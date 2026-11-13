@@ -84,6 +84,7 @@ mkdirSync(join(out, 'bin'), { recursive: true });
 cpSync(prebuilt ? resolve(prebuilt) : join(checkout, 'compiler', 'target', 'release', exe), join(out, 'bin', exe));
 copy('src', 'src');
 copy('native', 'native');
+copy('host', 'host');
 copy('packages/reactc-ui', 'packages/reactc-ui');
 copy('packages/reactc-threads', 'packages/reactc-threads');
 copy('templates', 'templates');
@@ -91,7 +92,9 @@ copy('templates', 'templates');
 // 3. Tools. The toolchain contains Linux symlinks and executables, so on
 // Windows it is copied inside WSL. Copies are incremental.
 const tools = ['porf', 'local', 'skia-win', 'node-win', 'ada-win', 'node-host', 'ada'];
-if (args.includes('--wasm')) tools.push('wasi-sdk', 'wasmtime', 'wasmtime-c-linux', 'wasmtime-c-android', 'ada-wasi');
+if (args.includes('--wasm')) tools.push('wasi-sdk', 'wasmtime', 'wasmtime-c-linux', 'ada-wasi');
+// the Android runtime's C API is optional (it needs the Android NDK; see native/wasm/README.md)
+if (args.includes('--wasm') && existsSync(join(toolsDir, 'wasmtime-c-android'))) tools.push('wasmtime-c-android');
 for (const tool of tools) {
   if (!existsSync(join(toolsDir, tool))) throw new Error(`${join(toolsDir, tool)} is missing; run npm run setup (see tools/README.md)`);
 }
@@ -151,8 +154,8 @@ another copy, or \`--root\` / \`"root"\` for a single build.
   \`build.ps1\` and npm scripts use this compiler.
 `);
 
-// 5. Self-test: the packaged compiler bundles an app from an unrelated folder,
-// finding its runtime through the executable.
+// 5. Self-test: the packaged compiler creates a project from its template in an
+// unrelated folder and builds it, finding its runtime through the executable.
 if (args.includes('--no-self-test') || (packageOs === 'windows') !== windows) {
   console.log(`
 reactc ${version} packaged in ${out} (no self-test)`);
@@ -160,13 +163,18 @@ reactc ${version} packaged in ${out} (no self-test)`);
 }
 const scratch = mkdtempSync(join(tmpdir(), 'reactc-package-'));
 const packaged = join(out, 'bin', exe);
-run(packaged, ['build', join(checkout, 'examples', 'starter', 'App.tsx'), '--outdir', join(scratch, 'bundle')], { cwd: scratch });
+// a project from the packaged template, its client bundled
+const project = join(scratch, 'app');
+run(packaged, ['new', project], { cwd: scratch });
+run(packaged, ['build', join(project, 'client', 'App.tsx'), '--http-origin', 'http://127.0.0.1:5180',
+  '--outdir', join(scratch, 'bundle')], { cwd: scratch });
 if (!existsSync(join(scratch, 'bundle', 'app.cjs'))) throw new Error('The packaged compiler produced no bundle');
 if (args.includes('--smoke-native')) {
+  // its server (node:http and @reactc/threads) compiled to a native executable
   const target = packageOs === 'windows' ? 'windows' : 'host';
-  run(packaged, ['build', join(checkout, 'examples', 'starter', 'App.tsx'), '--async-page', '--target', target,
-    '--name', 'PackagedStarter', '--outdir', join(scratch, 'native')], { cwd: scratch });
-  const binary = join(scratch, 'native', windows ? 'PackagedStarter.exe' : 'app');
+  run(packaged, ['build', join(project, 'server', 'index.ts'), '--server', '--target', target,
+    '--name', 'PackagedServer', '--outdir', join(scratch, 'native')], { cwd: scratch });
+  const binary = join(scratch, 'native', packageOs === 'windows' ? 'PackagedServer.exe' : 'PackagedServer');
   if (!existsSync(binary)) throw new Error('The packaged compiler produced no executable');
   console.log('Native self-test built ' + binary);
 }

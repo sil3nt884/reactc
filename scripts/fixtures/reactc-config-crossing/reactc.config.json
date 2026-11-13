@@ -1,7 +1,0 @@
-{
-  "native": false,
-  "outDir": "../../../dist/reactc-config-crossing",
-  "root": "../../..",
-  "server": { "folders": ["server"], "entry": "server/index.js" },
-  "client": { "folders": ["client"], "entry": "client/App.jsx" }
-}
