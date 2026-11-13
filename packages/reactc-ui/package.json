@@ -9,14 +9,14 @@
     "native",
     "windows"
   ],
-  "homepage": "https://github.com/OWNER/reactc/tree/main/packages/reactc-ui#readme",
+  "homepage": "https://github.com/sil3nt884/reactc/tree/main/packages/reactc-ui#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/reactc.git",
+    "url": "git+https://github.com/sil3nt884/reactc.git",
     "directory": "packages/reactc-ui"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/reactc/issues"
+    "url": "https://github.com/sil3nt884/reactc/issues"
   },
   "type": "module",
   "exports": {

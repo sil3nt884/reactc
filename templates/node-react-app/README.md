@@ -6,7 +6,7 @@ side into a native executable, for Windows (`dist/windows/server/TasksServer.exe
 No JavaScript engine runs in either program.
 
 It uses the reactc libraries from the start:
-- [`@reactc/threads`](https://github.com/OWNER/reactc/tree/main/packages/reactc-threads#readme):
+- [`@reactc/threads`](https://github.com/sil3nt884/reactc/tree/main/packages/reactc-threads#readme):
   `GET /summary` computes task statistics on its own thread
   (`server/summary.ts`), awaited like a promise while the server keeps serving.
 - `@reactc/ui` (React layout, controls and window chrome) is installed and

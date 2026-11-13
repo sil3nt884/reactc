@@ -9,14 +9,14 @@
     "reactc",
     "native"
   ],
-  "homepage": "https://github.com/OWNER/reactc/tree/main/packages/reactc-threads#readme",
+  "homepage": "https://github.com/sil3nt884/reactc/tree/main/packages/reactc-threads#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/reactc.git",
+    "url": "git+https://github.com/sil3nt884/reactc.git",
     "directory": "packages/reactc-threads"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/reactc/issues"
+    "url": "https://github.com/sil3nt884/reactc/issues"
   },
   "type": "module",
   "exports": {
