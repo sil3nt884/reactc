@@ -347,6 +347,17 @@ accepts it through `--wasm-runtime`.
 
 ## HTTP and Node APIs
 
+Without `--http-origin`, servers and UI apps get reactc's own `fetch`, an
+HTTP/1.1 client over `node:net` and `node:tls` (src/node-net/fetch.js).
+It streams response bodies, handles binary bodies of any size, follows
+redirects (`redirect: 'follow' | 'manual' | 'error'`), keeps cookies per
+program (`credentials: 'omit'` skips them), decodes gzip, deflate and Brotli,
+pools keep-alive connections, and honours `signal`. HTTPS verifies
+certificates; the non-standard `tls: { ca, cert, key, rejectUnauthorized }`
+option sets per-request trust, and such requests never share pooled
+connections with others. Programs that want their own protocol can use
+`node:net`, `node:tls` and `node:dgram` directly.
+
 `--http-origin http://127.0.0.1:4000` enables the async page driver and binds
 unshadowed `fetch(...)` calls to the native host HTTP service. The binding
 accepts relative paths starting with `/` and absolute URLs on the configured

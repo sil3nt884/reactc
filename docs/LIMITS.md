@@ -25,13 +25,24 @@ What reactc does not do yet, kept current as the compiler grows. Details are in 
 - **Compile times** can be long. An Express server's C takes about 25 minutes
   in one optimising compiler pass.
 
-## HTTP client (`fetch` in UI and servers)
+## HTTP client (`fetch`)
 
-- No cookies are kept, and redirects are not followed.
-- No streaming. Bodies are buffered UTF-8, at most 64 KiB each way, and
-  binary bodies are unsupported.
-- At most 64 request headers and 8 KiB. Headers the host owns (`Host`,
-  `Content-Length`, `Origin`, `Connection`, `Proxy-*`, `Sec-*`) are refused.
+Servers, and UI apps built without `--http-origin`, get a `fetch` written in
+JavaScript over `node:net` and `node:tls` (src/node-net/fetch.js): HTTP/1.1
+with keep-alive pooling, chunked and streamed bodies (`response.body`),
+binary bodies of any size, redirects, a cookie jar per program, gzip, deflate
+and Brotli, `AbortSignal`, and HTTPS with certificate verification (custom
+trust through the `tls: { ca, cert, key, rejectUnauthorized }` option).
+
+- No HTTP/2, HTTP/3 or proxies. Request bodies are buffered before sending.
+- The cookie jar is in memory only (no persistence, no public-suffix list,
+  `SameSite` ignored); `clearCookies()` from `reactc:fetch-tcp` empties it.
+- UI apps built with `--http-origin` still use the host transport (WinHTTP or
+  the Python host), with its limits: no cookies, no redirects, no streaming,
+  buffered UTF-8 bodies up to 64 KiB, at most 64 request headers and 8 KiB,
+  and host-owned headers (`Host`, `Content-Length`, `Origin`, `Connection`,
+  `Proxy-*`, `Sec-*`) refused.
+- WASI builds have no `fetch` over TCP.
 
 ## npm packages and JavaScript
 

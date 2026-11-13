@@ -1,6 +1,6 @@
 # Design: native TCP and UDP streams, and fetch over them
 
-Status: step 1 (UDP) is implemented: `node:dgram` on libuv (src/reactc-dgram.h, src/node-net/dgram.js), in servers and UI apps, verified on Windows and Linux. TLS streams and fetch over TCP are next.
+Status: steps 1, 3 and 4 are implemented and verified on Windows and Linux. UDP is `node:dgram` on libuv (src/reactc-dgram.h, src/node-net/dgram.js). `fetch` is an HTTP/1.1 client over `node:net`/`node:tls` (src/node-net/fetch.js), injected into servers and into UI apps built without `--http-origin`. Still open: the `node:net` CI coverage test (step 2) and switching `--http-origin` UI apps to the new client (step 5).
 
 ## Goal
 

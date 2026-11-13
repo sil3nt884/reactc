@@ -44,6 +44,8 @@ fn server_library(specifier: &str, windows: bool) -> Option<(&'static str, &'sta
         "reactc:native" | "@reactc/native" => Some(("reactc:native", "../packages/reactc-native/src/index.js")),
         // UDP sockets on libuv (Porffor has no node:dgram)
         "dgram" => Some(("dgram", "node-net/dgram.js")),
+        // fetch over node:net and node:tls (an HTTP/1.1 client in JavaScript)
+        "reactc:fetch-tcp" => Some(("reactc:fetch-tcp", "node-net/fetch.js")),
         _ => None,
     }
 }
@@ -146,7 +148,7 @@ impl Plugin for NativePlugin {
                 bail!("{} is unavailable for the WASI Preview 1 target", args.specifier);
             }
             match module {
-                "fs" | "fs/promises" | "stream" | "net" | "child_process" |
+                "fs" | "fs/promises" | "stream" | "net" | "tls" | "child_process" |
                 "zlib" | "crypto" | "http" | "https" => {},
                 _ => bail!("{} is unavailable for this reactc target", args.specifier),
             }
@@ -342,6 +344,12 @@ pub async fn bundle(options: &Options) -> Result<Report> {
     if options.http_origin.is_some() {
         inject.push(InjectImport::named("fetch".into(), None, FETCH_ID.into()));
         inject.push(InjectImport::named("Headers".into(), None, FETCH_ID.into()));
+    } else if options.target != crate::Target::Wasm && options.worker.is_none() {
+        // Servers, and UI apps without a host HTTP origin, get fetch over TCP.
+        let tcp_fetch = format!("{LIB_ID}reactc:fetch-tcp");
+        for name in ["fetch", "Headers", "Response", "Request"] {
+            inject.push(InjectImport::named(name.into(), None, tcp_fetch.clone()));
+        }
     }
     if !options.server {
         inject.push(InjectImport::named("nativeWindow".into(), Some("window".into()), runtime_id.clone()));
