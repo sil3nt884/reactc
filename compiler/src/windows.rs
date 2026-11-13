@@ -16,6 +16,30 @@ use crate::native::PINNED_HEADER;
 const SHARED_BEGIN: &str = "\n/* reactc:shared-begin */\n";
 const SHARED_END: &str = "\n/* reactc:shared-end */\n";
 
+fn rename_mingw_locals(source: &mut String) -> Result<()> {
+    let locals = Regex::new(r"(?m)^  jsval (_HEX|_S_IFMT|_S_IFREG) = ")?;
+    let mut functions = Vec::new();
+    for local in locals.find_iter(source) {
+        let prefix = &source[..local.start()];
+        let Some(start) = prefix.rfind("\njsval p_") else { continue };
+        if prefix[start..].contains("\n}\n") { continue; }
+        let Some(end) = source[local.end()..].find("\n}\n") else { continue };
+        let range = start..local.end() + end;
+        if functions.last() != Some(&range) { functions.push(range); }
+    }
+    let tokens = Regex::new(r#""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|//[^\n]*|/\*[\s\S]*?\*/|\b(_HEX|_S_IFMT|_S_IFREG)\b"#)?;
+    for range in functions.into_iter().rev() {
+        let body = tokens.replace_all(&source[range.clone()], |token: &regex::Captures| {
+            match token.get(1) {
+                Some(name) => format!("reactc_js{}", name.as_str()),
+                None => token[0].to_owned(),
+            }
+        }).into_owned();
+        source.replace_range(range, &body);
+    }
+    Ok(())
+}
+
 fn replace_function(source: &mut String, name: &str, body: &str) -> Result<()> {
     let pattern = Regex::new(&format!(
         r"(?ms)^static [^\n]+\b{}\([^\n]*\) \{{\n.*?^\}}",
@@ -158,10 +182,26 @@ pub fn adapt(source: &str, root: &Path) -> Result<String> {
         source = word.replace_all(&source, NoExpand("(-1)")).into_owned();
     }
     source = source.replace("_setjmp(", "setjmp(").replace("_longjmp(", "longjmp(");
+    // Porffor may use MinGW macro names for JavaScript locals. Rename only
+    // identifier tokens inside generated JavaScript functions. Native C
+    // helpers still use the original header macros.
+    rename_mingw_locals(&mut source)?;
     // The in-process console wrappers bypass CRT descriptor redirection.
     source = source.replace("fflush(stdout); const int porf_out = dup(1); dup2(2, 1);", "PORF_CONSOLE_STDERR_BEGIN;")
         .replace("fflush(stdout); dup2(porf_out, 1); close(porf_out);", "PORF_CONSOLE_STDERR_END;");
     let runtime = root.join("src").join("windows-runtime.h");
     let header = std::fs::read_to_string(&runtime).with_context(|| format!("cannot read {}", runtime.display()))?;
     Ok(format!("{SHARED_BEGIN}{header}{SHARED_END}{source}"))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn renames_javascript_locals_without_changing_native_macro_uses() {
+        let mut source = "\njsval p_app(void) {\n  jsval _HEX = JV_UNDEFINED;\n  jsval _S_IFMT = _HEX;\n  print(\"_HEX\");\n}\nstatic int mode(void) {\n  return _S_IFMT;\n}\n".to_owned();
+        super::rename_mingw_locals(&mut source).unwrap();
+        assert!(source.contains("jsval reactc_js_S_IFMT = reactc_js_HEX;"));
+        assert!(source.contains("print(\"_HEX\");"));
+        assert!(source.contains("return _S_IFMT;"));
+    }
 }

@@ -81,7 +81,7 @@ class Session:
             if self.transport and kind == 'requests' and len(value['requests']) == 1:
                 request = value['requests'][0]
                 self.write({'type': 'result', 'id': request['id'], 'result': self.transport(request)})
-            elif self.transport and kind == 'wait':
+            elif kind == 'wait':
                 time.sleep(max(0, value['wakeAt'] / 1000 - time.time()))
                 self.write({'type': 'tick'})
             else:
@@ -219,6 +219,9 @@ class NativeWindow:
     def poll_results(self):
         while not self.results.empty():
             self.apply(self.session.send(self.results.get_nowait()))
+        wake_at = self.session.snapshot.get('wakeAt')
+        if wake_at is not None and wake_at <= time.time() * 1000:
+            self.apply(self.session.send({'type': 'tick'}))
         self.root.after(30, self.poll_results)
 
 

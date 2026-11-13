@@ -29,6 +29,7 @@ present:
 | `install-porffor.sh` | `tools/porf`, the pinned Porffor compiler |
 | `install-ada.sh [--windows]` | the URL parser for Linux (`tools/ada`) and Windows (`tools/ada-win`) targets |
 | `install-node-libs.sh [--windows]` | libuv, uSockets, zlib, Brotli, zstd and OpenSSL for Node APIs (`tools/node-host`, `tools/node-win`) |
+| `install-http2.sh [--windows]` | pinned static nghttp2 for Linux (`tools/http2-host`) and Windows (`tools/http2-win`) |
 | `install-skia-windows.sh` | `tools/skia-win`, the Skia library Windows UIs render with |
 
 Executables built with `tools/local` need a glibc at least as new as Ubuntu

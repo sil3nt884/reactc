@@ -70,6 +70,17 @@ jobs:
         with:
           workspaces: compiler
       - run: cargo build --locked --manifest-path compiler/Cargo.toml
+      - name: Native HTTP/2 fetch
+        run: |
+          export PATH="$PWD/tools/local/node-v22.16.0-linux-x64/bin:$PATH"
+          apt-get install -y -qq libuv1t64 openssl >/dev/null
+          mkdir -p dist/ci/http2
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
+            -addext subjectAltName=IP:127.0.0.1 -keyout dist/ci/http2/key.pem -out dist/ci/http2/cert.pem
+          compiler/target/debug/reactc build scripts/ci/fixtures/fetch-http2.server.js \
+            --target linux --name fetch-http2 --outdir dist/ci/http2
+          node scripts/ci/fetch-http2.mjs "$PWD/dist/ci/http2/fetch-http2" \
+            "$PWD/dist/ci/http2/cert.pem" "$PWD/dist/ci/http2/key.pem"
       - name: Generated Node + React project (npm run build:linux)
         run: |
           export PATH="$PWD/tools/local/node-v22.16.0-linux-x64/bin:$PATH"

@@ -160,6 +160,13 @@ neither WSL nor Node.
 
 ## Separate UI and server programs
 
+For a Next.js App Router project, pass its root `app/page.tsx` or
+`src/app/page.tsx` as the UI entry. reactc discovers pages and route handlers,
+applies the root layout, and supplies promise-based `params` and `searchParams`.
+Local links, redirects, and form actions run in the native page. The runtime
+keeps route cookies in memory. Bitmap image elements show their alternative
+text, and the native CSS subset applies to imported stylesheets.
+
 Name a server entry `*.server.ts`, `*.server.js`, `*.server.mjs`, or
 `*.server.cjs`, or pass `--server` for an existing filename such as
 `server/api.ts`. The server build bundles the entry for Porffor and links
@@ -347,38 +354,32 @@ accepts it through `--wasm-runtime`.
 
 ## HTTP and Node APIs
 
-Without `--http-origin`, servers and UI apps get reactc's own `fetch`, an
-HTTP/1.1 client over `node:net` and `node:tls` (src/node-net/fetch.js).
-It streams response bodies, handles binary bodies of any size, follows
-redirects (`redirect: 'follow' | 'manual' | 'error'`), keeps cookies per
-program (`credentials: 'omit'` skips them), decodes gzip, deflate and Brotli,
-pools keep-alive connections, and honours `signal`. HTTPS verifies
-certificates; the non-standard `tls: { ca, cert, key, rejectUnauthorized }`
-option sets per-request trust, and such requests never share pooled
-connections with others. Programs that want their own protocol can use
-`node:net`, `node:tls` and `node:dgram` directly.
+Windows and Linux builds use `fetch` over `node:net` and `node:tls` for
+both servers and UI apps. A plain `fetch(url)` offers HTTP/2 (`h2`) first over
+HTTPS using ALPN and uses HTTP/1.1 when `h2` is not negotiated. Cleartext HTTP
+defaults to HTTP/1.1. To use HTTP/2 with a cleartext origin you know supports it,
+pass `fetch(url, { httpVersion: '2' })`. This sends the HTTP/2 connection
+preface directly over TCP, as described in
+[RFC 9113 §3](https://www.rfc-editor.org/rfc/rfc9113.html#section-3).
+HTTP/2 uses nghttp2 for framing, HPACK, multiplexing, and flow control.
 
-`--http-origin http://127.0.0.1:4000` enables the async page driver and binds
-unshadowed `fetch(...)` calls to the native host HTTP service. The binding
-accepts relative paths starting with `/` and absolute URLs on the configured
-HTTP(S) origin. An explicitly configured `http://127.0.0.1` origin also
-accepts `http://localhost` URLs on the same port and sends them to IPv4.
-It supports `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`.
-Request headers (for example `Authorization: Bearer …`) may be a plain
-object, `[name, value]` pairs or a `Headers` instance; `Headers` is
-available as a global. String bodies default to `text/plain;charset=UTF-8`
-and `URLSearchParams` bodies to `application/x-www-form-urlencoded`; both
-are UTF-8 up to 64 KiB, and GET/HEAD refuse bodies. Headers the host owns,
-such as `Host`, `Content-Length`, `Origin`, `Connection`, and `Proxy-*` or
-`Sec-*`, are refused, and the request headers are limited to 64 entries and
-8 KiB. The response exposes `status`, `statusText`, `ok`, `url`, `headers`
-(`get`, `has`, `forEach`, `entries`), `text()` and `json()` over buffered
-UTF-8 up to 64 KiB. Transport failures reject the promise; HTTP errors
-resolve with their status, headers and body. Redirects are not followed,
-cookies are not kept, and streaming or binary bodies are outside this subset.
-The only accepted option besides `method`, `headers` and `body` is `cache`,
-because the host never caches. The Linux protocol host can serve it with
-`host/native_page.py --http`; Windows apps use WinHTTP.
+Both protocols support redirects (`redirect: 'follow' | 'manual' | 'error'`),
+a per-program cookie jar, binary response bodies, and cancellation via
+`signal`. `response.body` is a `ReadableStream`, including for gzip, deflate
+and Brotli responses. Use `duplex: 'half'` with a `ReadableStream` or async
+iterable request body. `Blob` and `FormData` also work as request bodies.
+HTTPS verifies certificates. Use the reactc-specific
+`tls: { ca, cert, key, rejectUnauthorized }` option to configure trust or
+client certificates. Requests with different TLS options use separate
+connections.
+
+`--http-origin http://127.0.0.1:4000` enables the async page driver. It lets
+native UI apps fetch relative paths, and limits requests and redirects to
+the configured origin. For an IPv4 loopback origin it also accepts
+`localhost` URLs on the same port. For UIs that fetch absolute URLs without a
+configured origin, pass `--async-page` to let background requests update the
+page. WASI uses the host HTTP service, which
+the Linux protocol host enables with `host/native_page.py --http`.
 
 `reactc` passes explicit `node:` imports for `fs`, `fs/promises`, `stream`,
 `net`, `child_process`, `zlib`, `crypto`, `http`, and `https` to Porffor

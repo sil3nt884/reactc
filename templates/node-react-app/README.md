@@ -75,13 +75,9 @@ scripts use `REACTC_HOME` or `reactc` on PATH.
 - Use explicit `.ts`/`.tsx` extensions in imports and erasable TypeScript
   only (no `enum`, `namespace` or constructor parameter properties). Node runs
   the sources directly, and reactc bundles them the same way.
-- Client `fetch` goes to the `httpOrigin` in `reactc.config.json`. It supports
-  every method (GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS), request
-  headers such as `Authorization: Bearer …` (given as an object, pairs or
-  `Headers`), string and `URLSearchParams` bodies up to 64 KiB, and responses
-  with `status`, `statusText`, `headers.get()`, `text()` and `json()` (text
-  bodies up to 64 KiB). The host sets `Host`, `Content-Length`, `Origin` and
-  similar headers itself, and does not follow redirects or keep cookies.
+- Client `fetch` accepts relative URLs and follows redirects within the
+  `httpOrigin` in `reactc.config.json`. The template uses HTTP/1.1 on
+  loopback. HTTPS origins negotiate HTTP/2 when the server advertises it.
 - React support: function components and hooks, forms (`onSubmit`, Enter
   submits), `onClick`, `onChange`, `onKeyDown`, `localStorage`, `alert` and
   `confirm`. The window gets a default title bar. Known gaps are listed in the

@@ -243,7 +243,13 @@ pub fn emit(options: &Options, js: &Path) -> Result<Vec<&'static str>> {
     if options.dgram {
         dgram_runtime(&c)?;
     }
-    let original = std::fs::read_to_string(c)?;
+    let mut original = std::fs::read_to_string(&c)?;
+    if original.contains("reactc_h2_open();") {
+        let marker = "static char *porf_uv_buf;\n";
+        let at = original.find(marker).context("HTTP/2 needs Porffor's networking backend")? + marker.len();
+        original.insert_str(at, "#include \"src/reactc-http2.h\"\n");
+        std::fs::write(&c, &original)?;
+    }
     let source = without_unused_glue(original.clone())?;
     let mut files = vec!["app.c"];
     if options.target == Target::Wasm {
@@ -384,6 +390,10 @@ fn uses_uws(source: &str) -> bool {
     source.contains("porf_uws_app_new(porf_uv_loop,") || source.contains("porf_uws_release((int)")
 }
 
+fn uses_http2(source: &str) -> bool {
+    source.contains("#include \"src/reactc-http2.h\"")
+}
+
 fn node_link_args(options: &Options, source: &str) -> Result<(String, String)> {
     let windows = options.target == Target::Windows;
     let uv = source.contains("#include <uv.h>");
@@ -432,7 +442,7 @@ fn node_link_args(options: &Options, source: &str) -> Result<(String, String)> {
     if ssl { link_flags.push_str(" -lssl"); }
     if crypto {
         link_flags.push_str(" -lcrypto");
-        if windows { link_flags.push_str(" -lcrypt32 -lbcrypt -lws2_32"); }
+        if windows { link_flags.push_str(" -lcrypt32 -lbcrypt"); }
     }
     if uv {
         link_flags.push_str(" -luv");
@@ -442,7 +452,29 @@ fn node_link_args(options: &Options, source: &str) -> Result<(String, String)> {
             link_flags.push_str(" -pthread");
         }
     }
+    if windows && crypto && !uv { link_flags.push_str(" -lws2_32"); }
+    if uses_http2(source) {
+        let http2 = options.root.join("tools").join(if windows { "http2-win" } else { "http2-host" });
+        let archive = http2.join("lib/libnghttp2.a");
+        if !archive.is_file() { bail!("missing nghttp2; run `npm run setup`"); }
+        compile_flags.push_str(&format!(" -I{}", tool(&http2.join("include"))?));
+        link_flags.push_str(&format!(" {}", tool(&archive)?));
+    }
     Ok((compile_flags, link_flags))
+}
+
+fn append_http2_notice(options: &Options, source: &str, notices: &mut String) -> Result<()> {
+    let mut linked = uses_http2(source);
+    for object in &options.worker_objects {
+        if linked { break; }
+        let directory = object.parent().context("worker object has no folder")?;
+        linked = uses_http2(&worker_core(directory, options.target == Target::Windows)?);
+    }
+    if !linked { return Ok(()); }
+    notices.push_str("\nnghttp2\n");
+    notices.push_str(&std::fs::read_to_string(options.root.join("tools/http2-win/LICENSE.txt"))
+        .context("missing the nghttp2 license; run `npm run setup`")?);
+    Ok(())
 }
 
 /// The worker program's generated C, for library selection.
@@ -561,6 +593,7 @@ fn windows_library_notices(options: &Options, source: &str, ada: bool) -> Result
                 .with_context(|| format!("missing {name} notice; run `sh tools/install-node-libs.sh --windows`"))?);
         }
     }
+    append_http2_notice(options, source, &mut notices)?;
     Ok(notices)
 }
 
@@ -626,6 +659,7 @@ fn link_windows(options: &Options) -> Result<PathBuf> {
                 .with_context(|| format!("missing {name} notice; run `sh tools/install-node-libs.sh --windows`"))?);
         }
     }
+    append_http2_notice(options, &source, &mut notices)?;
     let notices_path = out.join("notices.txt");
     std::fs::write(&notices_path, notices)?;
     // windres runs in the build environment, so resource paths use its spelling.

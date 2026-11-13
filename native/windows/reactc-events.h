@@ -299,7 +299,12 @@ static void native_apply_frame(HWND hwnd, struct ReactcFrame *frame) {
         FILE *log = fopen(APP_LOG, "a");
         if (log) {
             if (*frame->fatal) fprintf(log, "%s\n", frame->fatal);
-            else fputs("Native application operation failed\n", log);
+            else {
+                wchar_t message[512] = {0};
+                string(frame->document, get(frame->document, 1, "error"), message, 512);
+                if (*message) fprintf(log, "Native application operation failed: %ls\n", message);
+                else fputs("Native application operation failed\n", log);
+            }
             fclose(log);
         }
     }
@@ -308,7 +313,14 @@ static void native_apply_frame(HWND hwnd, struct ReactcFrame *frame) {
         InvalidateRect(hwnd, NULL, FALSE);
         return;
     }
-    if (smoke && !event) SetTimer(hwnd, 1, 200, NULL);
+    if (smoke && !event) {
+        if (!success) {
+            native_discard_frame(frame);
+            PostQuitMessage(1);
+            return;
+        }
+        SetTimer(hwnd, 1, 200, NULL);
+    }
     // A key reported from the main window replays there; one from the editor
     // replays only while the same editor instance is open.
     if (event && event->fallback.hwnd && event->fallback.hwnd == hwnd && !frame->key_prevented) {

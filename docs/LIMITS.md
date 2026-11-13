@@ -27,22 +27,24 @@ What reactc does not do yet, kept current as the compiler grows. Details are in 
 
 ## HTTP client (`fetch`)
 
-Servers, and UI apps built without `--http-origin`, get a `fetch` written in
-JavaScript over `node:net` and `node:tls` (src/node-net/fetch.js): HTTP/1.1
-with keep-alive pooling, chunked and streamed bodies (`response.body`),
-binary bodies of any size, redirects, a cookie jar per program, gzip, deflate
-and Brotli, `AbortSignal`, and HTTPS with certificate verification (custom
-trust through the `tls: { ca, cert, key, rejectUnauthorized }` option).
+Native builds negotiate HTTP/2 over HTTPS using ALPN and fall back to
+HTTP/1.1. Use `fetch(url, { httpVersion: '2' })` for a cleartext HTTP/2 origin
+with prior knowledge. HTTP/2 requests share a connection per origin and TLS
+options. The HTTP/2 client disables server push. Both protocols support
+streaming uploads (`duplex: 'half'`), redirects, cancellation and incremental
+gzip, deflate and Brotli decoding. `Request` and `Response` expose readable web
+streams, cloning, and `blob()` and `formData()` readers.
 
-- No HTTP/2, HTTP/3 or proxies. Request bodies are buffered before sending.
+- No HTTP/3, proxies or Node-compatible custom dispatchers. `Blob` and
+  multipart request bodies are assembled in memory before transmission.
+- Incremental decoding can queue decoded output ahead of a slow reader.
 - The cookie jar is in memory only (no persistence, no public-suffix list,
   `SameSite` ignored); `clearCookies()` from `reactc:fetch-tcp` empties it.
-- UI apps built with `--http-origin` still use the host transport (WinHTTP or
-  the Python host), with its limits: no cookies, no redirects, no streaming,
-  buffered UTF-8 bodies up to 64 KiB, at most 64 request headers and 8 KiB,
-  and host-owned headers (`Host`, `Content-Length`, `Origin`, `Connection`,
-  `Proxy-*`, `Sec-*`) refused.
-- WASI builds have no `fetch` over TCP.
+- Native UI builds with `--http-origin` accept relative URLs and restrict
+  requests and redirects to the configured origin.
+- WASI builds still use the host HTTP transport with `--http-origin`. That
+  transport is limited to 64 KiB of UTF-8 and has no cookies, redirects or
+  streaming.
 
 ## npm packages and JavaScript
 

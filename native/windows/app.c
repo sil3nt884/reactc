@@ -724,5 +724,5 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
      editor_enter(&msg,GetKeyState(VK_SHIFT)<0,GetKeyState(VK_CONTROL)<0,GetKeyState(VK_MENU)<0,
       GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0,(msg.lParam&(1L<<30))!=0))continue;
   TranslateMessage(&msg);DispatchMessageW(&msg);
- }cleanup();DeleteObject(edit_font);free(pixels);free(snapshot);free(reply);return 0;
+ }cleanup();DeleteObject(edit_font);free(pixels);free(snapshot);free(reply);return (int)msg.wParam;
 }

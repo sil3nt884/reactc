@@ -1,4 +1,6 @@
 // Native text fields use the same ordered, repeatable form values as FormData.
+import { applyGatewayRedirect } from './page-runtime.js';
+
 export class FormTarget {
   constructor(entries, reset) {
     this.entries = entries;
@@ -75,7 +77,10 @@ export function runFormAction(state, data, perform, onComplete, onError) {
     onComplete(value);
   }, error => {
     finish();
-    onError(error);
+    if (typeof error?.nativeRedirect === 'string') {
+      try { applyGatewayRedirect(error.nativeRedirect); onComplete(); }
+      catch (redirectError) { onError(redirectError); }
+    } else onError(error);
   });
 }
 

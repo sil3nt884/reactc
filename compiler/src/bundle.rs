@@ -20,6 +20,8 @@ use crate::Options;
 use crate::lower::{JSX_FACTORY, JSX_FRAGMENT, lower};
 
 const ENTRY_ID: &str = "\0reactc:entry";
+const NEXT_ENTRY_ID: &str = "\0reactc:next-entry";
+const NEXT_SERVER_ONLY_ID: &str = "\0reactc:server-only";
 const FETCH_ID: &str = "\0reactc:fetch";
 const NODE_ID: &str = "\0reactc:node:";
 const LIB_ID: &str = "\0reactc:lib:";
@@ -44,8 +46,9 @@ fn server_library(specifier: &str, windows: bool) -> Option<(&'static str, &'sta
         "reactc:native" | "@reactc/native" => Some(("reactc:native", "../packages/reactc-native/src/index.js")),
         // UDP sockets on libuv (Porffor has no node:dgram)
         "dgram" => Some(("dgram", "node-net/dgram.js")),
-        // fetch over node:net and node:tls (an HTTP/1.1 client in JavaScript)
+        // fetch over node:net and node:tls, with native HTTP/2 framing.
         "reactc:fetch-tcp" => Some(("reactc:fetch-tcp", "node-net/fetch.js")),
+        "reactc:http2" => Some(("reactc:http2", "node-net/http2.js")),
         _ => None,
     }
 }
@@ -94,6 +97,7 @@ struct Observed {
 #[derive(Debug)]
 struct NativePlugin {
     entry: PathBuf,
+    next: Option<crate::next::App>,
     page_runtime: PathBuf,
     compiler_runtime: PathBuf,
     http_origin: Option<String>,
@@ -137,6 +141,17 @@ impl Plugin for NativePlugin {
         if args.specifier.starts_with(LIB_ID) {
             return Ok(Some(HookResolveIdOutput::from_id(args.specifier)));
         }
+        if self.next.is_some() {
+            let id = match args.specifier {
+                NEXT_ENTRY_ID | NEXT_SERVER_ONLY_ID => Some(args.specifier.to_owned()),
+                "server-only" => Some(NEXT_SERVER_ONLY_ID.to_owned()),
+                "reactc:fetch-tcp" => Some(format!("{LIB_ID}reactc:fetch-tcp")),
+                "next/link" | "next/navigation" | "next/cache" | "next/headers" | "next/server" | "reactc:next-app" =>
+                    Some(self.page_runtime.with_file_name("next-app.js").to_string_lossy().into_owned()),
+                _ => None,
+            };
+            if let Some(id) = id { return Ok(Some(HookResolveIdOutput::from_id(id))); }
+        }
         if matches!(args.specifier, "@reactc/native" | "reactc:native") {
             return Ok(Some(HookResolveIdOutput::from_id(format!("{LIB_ID}reactc:native"))));
         }
@@ -156,7 +171,8 @@ impl Plugin for NativePlugin {
         }
         let target = match args.specifier {
             ENTRY_ID => return Ok(Some(HookResolveIdOutput::from_id(ENTRY_ID))),
-            FETCH_ID if self.http_origin.is_some() => return Ok(Some(HookResolveIdOutput::from_id(FETCH_ID))),
+            FETCH_ID if self.http_origin.is_some() || (self.async_page && !self.wasm) =>
+                return Ok(Some(HookResolveIdOutput::from_id(FETCH_ID))),
             // The native runtime stands in for React. No React package is bundled.
             "react" | "react-dom" | "react/jsx-runtime" | "react/jsx-dev-runtime" => &self.page_runtime,
             "react/compiler-runtime" => &self.compiler_runtime,
@@ -176,7 +192,7 @@ impl Plugin for NativePlugin {
             };
             let code = format!(
                 "import App from {};\nimport {{ createPage }} from {};\nexport const page = createPage(App, {{ asyncPage: {}, standardChildren: true, openExternal: {}, initialProps: {{}}{} }});\n",
-                specifier(&self.entry),
+                if self.next.is_some() { serde_json::to_string(NEXT_ENTRY_ID)? } else { specifier(&self.entry) },
                 specifier(&self.page_runtime),
                 self.async_page,
                 self.windows,
@@ -184,7 +200,25 @@ impl Plugin for NativePlugin {
             );
             return Ok(Some(HookLoadOutput { code: code.into(), module_type: Some(ModuleType::Js), ..Default::default() }));
         }
+        if args.id == NEXT_ENTRY_ID {
+            let code = self.next.as_ref().context("missing Next.js app")?
+                .entry(&self.page_runtime.with_file_name("next-app.js"), specifier)?;
+            return Ok(Some(HookLoadOutput { code: code.into(), module_type: Some(ModuleType::Js), ..Default::default() }));
+        }
+        if args.id == NEXT_SERVER_ONLY_ID {
+            return Ok(Some(HookLoadOutput { code: "export {};".into(), module_type: Some(ModuleType::Js), ..Default::default() }));
+        }
         if args.id == FETCH_ID {
+            if !self.wasm {
+                let tcp = serde_json::to_string(&format!("{LIB_ID}reactc:fetch-tcp"))?;
+                let runtime = specifier(&self.page_runtime);
+                let binding = format!("createPageFetch({}, beginNativeNetworkRequest, updateNativeNetworkStatus)", serde_json::to_string(&self.http_origin)?);
+                let (next_import, binding) = if self.next.is_some() {
+                    ("import { withRouteHandlers } from 'reactc:next-app';\n", format!("withRouteHandlers({binding})"))
+                } else { ("", binding) };
+                let code = format!("import {{ createPageFetch }} from {tcp};\nexport {{ Headers, Request, Response }} from {tcp};\nimport {{ beginNativeNetworkRequest, updateNativeNetworkStatus }} from {runtime};\n{next_import}export const fetch = {binding};\n");
+                return Ok(Some(HookLoadOutput { code: code.into(), module_type: Some(ModuleType::Js), ..Default::default() }));
+            }
             let origin = self.http_origin.as_ref().expect("fetch enabled");
             let runtime = specifier(&self.page_runtime.with_file_name("reactc-fetch.js"));
             let code = format!("import {{ createFetch }} from {runtime};\nexport {{ Headers }} from {runtime};\nexport const fetch = createFetch({});\n",
@@ -203,6 +237,7 @@ impl Plugin for NativePlugin {
             let code = std::fs::read_to_string(&file).map_err(|error| anyhow!("{}: {error}", file.display()))?
                 // The layer's modules import each other through their virtual IDs.
                 .replace("from './path.js'", &format!("from {}", serde_json::to_string(&format!("{LIB_ID}path"))?))
+                .replace("from './http2.js'", &format!("from {}", serde_json::to_string(&format!("{LIB_ID}reactc:http2"))?))
                 .replace("from './clone.js'", &format!("from {}", serde_json::to_string(&format!("{LIB_ID}reactc:clone"))?));
             if name == "worker_threads" { self.seen.threads.store(true, Ordering::Relaxed); }
             if name == "reactc:threads" { self.seen.shared_heap.store(true, Ordering::Relaxed); }
@@ -234,6 +269,15 @@ impl Plugin for NativePlugin {
             let code = format!("import {{ registerStylesheet }} from {}; registerStylesheet({});",
                 specifier(&self.page_runtime.with_file_name("native-css.js")), serde_json::to_string(&rules)?);
             return Ok(Some(HookLoadOutput { code: code.into(), module_type: Some(ModuleType::Js), ..Default::default() }));
+        }
+        let portable_path = args.id.replace('\\', "/");
+        if self.server && extension == "js" && (portable_path.contains("/node_modules/find-my-way/lib/") ||
+            portable_path.ends_with("/node_modules/zod/v4/core/util.js") ||
+            portable_path.ends_with("/node_modules/pg/lib/crypto/utils.js")) {
+            let source = std::fs::read_to_string(path)?;
+            if let Some(code) = crate::npm::lower(path, &source)? {
+                return Ok(Some(HookLoadOutput { code: code.into(), module_type: Some(ModuleType::Js), ..Default::default() }));
+            }
         }
         if self.server && matches!(extension, "js" | "mjs" | "cjs" | "ts" | "mts" | "cts" | "tsx" | "jsx") &&
             !args.id.replace('\\', "/").contains("/node_modules/") {
@@ -319,8 +363,13 @@ pub async fn bundle(options: &Options) -> Result<Report> {
     }
     let runtime_id = page_runtime.to_string_lossy().into_owned();
     let seen = Arc::new(Observed::default());
+    let next = if !options.server && options.target != crate::Target::Wasm {
+        crate::next::App::discover(&options.entry)?
+    } else { None };
+    let next_app = next.is_some();
     let plugin = Plugin::new_shared(NativePlugin {
         entry: options.entry.clone(),
+        next,
         page_runtime: page_runtime.clone(),
         compiler_runtime,
         http_origin: options.http_origin.clone(),
@@ -341,11 +390,16 @@ pub async fn bundle(options: &Options) -> Result<Report> {
             InjectImport::named(JSX_FRAGMENT.into(), None, runtime_id.clone()),
         ]
     };
-    if options.http_origin.is_some() {
+    if options.http_origin.is_some() || (options.async_page && options.target != crate::Target::Wasm) {
         inject.push(InjectImport::named("fetch".into(), None, FETCH_ID.into()));
         inject.push(InjectImport::named("Headers".into(), None, FETCH_ID.into()));
-    } else if options.target != crate::Target::Wasm && options.worker.is_none() {
-        // Servers, and UI apps without a host HTTP origin, get fetch over TCP.
+        if options.target != crate::Target::Wasm {
+            for name in ["Request", "Response"] {
+                inject.push(InjectImport::named(name.into(), None, FETCH_ID.into()));
+            }
+        }
+    } else if options.target != crate::Target::Wasm {
+        // Servers, workers and UI apps without a host HTTP origin use TCP fetch.
         let tcp_fetch = format!("{LIB_ID}reactc:fetch-tcp");
         for name in ["fetch", "Headers", "Response", "Request"] {
             inject.push(InjectImport::named(name.into(), None, tcp_fetch.clone()));
@@ -360,6 +414,11 @@ pub async fn bundle(options: &Options) -> Result<Report> {
             ("nativeAlert", "alert"), ("nativeConfirm", "confirm"),
         ] {
             inject.push(InjectImport::named(exported.into(), Some(global.into()), runtime_id.clone()));
+        }
+    }
+    if next_app {
+        for name in ["setTimeout", "clearTimeout"] {
+            inject.push(InjectImport::named(name.into(), None, "reactc:next-app".into()));
         }
     }
     let mut bundler = Bundler::with_plugins(

@@ -144,5 +144,5 @@ reactc builds on [Porffor](https://github.com/CanadaHonk/porffor) (MIT),
 [oxc](https://github.com/oxc-project/oxc) (MIT), Skia through
 [SkiaSharp](https://github.com/mono/SkiaSharp)'s native build (MIT/BSD),
 [libuv](https://github.com/libuv/libuv), [uWebSockets](https://github.com/uNetworking/uWebSockets),
-OpenSSL, zlib, Brotli, zstd and [ada](https://github.com/ada-url/ada). Release
+OpenSSL, zlib, Brotli, zstd, [nghttp2](https://nghttp2.org/) and [ada](https://github.com/ada-url/ada). Release
 packages include each project's license notices.

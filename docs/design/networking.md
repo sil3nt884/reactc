@@ -1,6 +1,9 @@
 # Design: native TCP and UDP streams, and fetch over them
 
-Status: steps 1, 3 and 4 are implemented and verified on Windows and Linux. UDP is `node:dgram` on libuv (src/reactc-dgram.h, src/node-net/dgram.js). `fetch` is an HTTP/1.1 client over `node:net`/`node:tls` (src/node-net/fetch.js), injected into servers and into UI apps built without `--http-origin`. Still open: the `node:net` CI coverage test (step 2) and switching `--http-origin` UI apps to the new client (step 5).
+Status: UDP uses libuv. Native fetch uses HTTP/1.1 and HTTP/2 over
+`node:net`/`node:tls`, including desktop builds configured with
+`--http-origin`. WASI uses the host transport. See
+[known limits](../LIMITS.md#http-client-fetch) for current API coverage.
 
 ## Goal
 
@@ -53,38 +56,18 @@ backlog, `allowHalfOpen`, IPv6, error codes) and add a native test to CI.
 `tls.connect` and `tls.createServer` over the OpenSSL reactc already links
 for `https`. This is needed so `fetch` can speak HTTPS from JavaScript.
 
-### 4. fetch over TCP, written in JavaScript
+### 4. Fetch over TCP
 
-`fetch` becomes an HTTP/1.1 client in reactc's runtime, over `node:net` and
-`node:tls`:
+HTTPS negotiates `h2` with ALPN and falls back to HTTP/1.1. Cleartext
+HTTP/2 uses explicit prior knowledge. nghttp2 supplies the HTTP/2 state
+machine and HPACK. The Fetch layer manages redirects, cookies and response
+consumption across both transports.
 
-- streaming request and response bodies (`ReadableStream`, `response.body`)
-- binary bodies (`ArrayBuffer`, `Uint8Array`, `Blob`) and no size limit
-- redirects (`redirect: 'follow' | 'manual' | 'error'`) and a cookie jar per
-  program
-- keep-alive connection pooling, chunked transfer, and gzip/Brotli decoding
-  (zlib is already linked)
-- `AbortController` and timeouts
+### 5. UI apps
 
-The host transport stays available behind a flag while the new client
-matures. It is removed once the new client covers the existing checks.
-
-### 5. UI apps: one event loop
-
-UI apps already link libuv in async-page mode. The Windows host runs its
-Win32 message loop on one thread and the compiled core on another, so the
-core's libuv loop runs on the core thread, which keeps sockets and the page
-runtime together. To confirm: that page events and socket events interleave
-fairly on that thread, which needs a UI test.
-
-## Steps
-
-1. `node:dgram` on libuv, with a native echo test on Windows and Linux.
-2. A `node:net` coverage test in CI.
-3. `node:tls` streams.
-4. The JavaScript `fetch` client, behind a flag, with streaming, binary,
-   redirects, cookies and HTTPS.
-5. Switch UI apps to it and remove the old limits from LIMITS.md.
+The page core uses its libuv loop for sockets. On Windows, Win32 runs on
+its own thread. WASI continues to forward configured-origin requests to the
+host.
 
 ## Open questions
 

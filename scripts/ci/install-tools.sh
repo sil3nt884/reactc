@@ -48,6 +48,8 @@ step() { echo; echo "== $*"; }
 [ -d tools/ada-win ] || { step "URL parser for Windows (tools/ada-win)"; sh tools/install-ada.sh --windows; }
 [ -d tools/node-host ] || { step "Node native libraries for Linux (tools/node-host)"; sh tools/install-node-libs.sh; }
 [ -d tools/node-win ] || { step "Node native libraries for Windows (tools/node-win)"; sh tools/install-node-libs.sh --windows; }
+[ -f tools/http2-host/lib/libnghttp2.a ] || { step "HTTP/2 library for Linux"; sh tools/install-http2.sh; }
+[ -f tools/http2-win/lib/libnghttp2.a ] || { step "HTTP/2 library for Windows"; sh tools/install-http2.sh --windows; }
 [ -d tools/skia-win ] || { step "Skia for Windows UIs (tools/skia-win)"; sh tools/install-skia-windows.sh; }
 if [ -n "$wasm" ]; then
   [ -d tools/wasi-sdk ] && [ -d tools/wasmtime ] || { step "WASI SDK and Wasmtime (tools/wasi-sdk, tools/wasmtime)"; sh tools/install-wasm.sh; }

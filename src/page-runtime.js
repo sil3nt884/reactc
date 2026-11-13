@@ -7,7 +7,7 @@ export { FormData };
 let currentFrame = null;
 let currentPage = null;
 const contextProviders = new Map();
-const tagTypes = { main:'Container', section:'Container', div:'Container', header:'Container', footer:'Container',
+const tagTypes = { html:'Container', body:'Container', main:'Container', section:'Container', div:'Container', header:'Container', footer:'Container',
   nav:'Container', article:'Container', form:'Container', ul:'Container', dl:'Container', li:'Container',
   pre:'Text', h1:'Heading', h2:'Heading', h3:'Heading', h4:'Heading', h5:'Heading', h6:'Heading', small:'Text', p:'Text', span:'Text', strong:'Text', code:'Text',
   dt:'Text', dd:'Text', label:'Label', input:'Input', textarea:'TextArea', button:'Button', select:'Select',
@@ -287,6 +287,11 @@ export function getPageNavigation() {
   return currentPage;
 }
 
+export function getPageCookies() {
+  if (!currentPage?.location) throw new Error('Cookies require an active native route');
+  return currentPage.routeCookies;
+}
+
 export function callServer(action, args, callback) {
   if (!currentPage || currentFrame) throw new Error('callServer must run inside an event callback');
   return currentPage.request(action, args, callback);
@@ -447,6 +452,13 @@ export function updateNativeNetworkStatus(online) {
   for (const listener of Array.from(page.networkListeners[type])) listener({ type, target: nativeWindow });
 }
 
+export function beginNativeNetworkRequest() {
+  const page = currentPage;
+  if (!page) return undefined;
+  page.pendingNetwork++;
+  return () => { page.pendingNetwork--; };
+}
+
 function eventPage() {
   if (!currentPage?.asyncPage || currentFrame) throw new Error('Native events require an active async page effect');
   return currentPage;
@@ -549,7 +561,9 @@ export function createPage(Component, options = {}) {
   }
 
   function nextWakeAt() {
-    return nextScheduledTimer()?.due;
+    const timer = nextScheduledTimer()?.due;
+    if (!page.pendingNetwork) return timer;
+    return Math.min(timer ?? Infinity, Date.now() + 25);
   }
 
   function fireTimer() {
@@ -571,10 +585,12 @@ export function createPage(Component, options = {}) {
   }
 
   const page = {
+    routeCookies: new Map(),
     synchronousHost: null,
     nextRequestId() { return 'request-' + (++nextRequest); },
     openExternal: options.openExternal === true,
     online: true,
+    pendingNetwork: 0,
     networkListeners: { online: new Set(), offline: new Set() },
     keyListeners: new Set(),
     documentAttributes: Object.create(null),
@@ -778,6 +794,12 @@ export function createPage(Component, options = {}) {
     }
     // Script is the native runtime here, so the original no-script fallback never applies.
     if (node.type === 'noscript' && asyncPage) return null;
+    if (node.type === 'script' && node.props?.type === 'application/ld+json') return null;
+    if (node.type === 'img') {
+      // Keep image alternatives in the layout until the host can paint bitmaps.
+      const { alt, className, style } = node.props;
+      return render(__jsx('span', { className, style, children: alt || '' }), path, form, context);
+    }
     const type = tagTypes[node.type];
     if (!type) throw new Error('Unsupported element: ' + node.type);
     let nodeProps = node.props;
@@ -1393,6 +1415,10 @@ export function createPage(Component, options = {}) {
         page.rendering = true;
         try {
           tree = await startRender();
+        } catch (error) {
+          if (typeof error?.nativeRedirect !== 'string' || !page.navigate) throw error;
+          page.navigate(error.nativeRedirect, 'replace');
+          continue;
         } finally {
           page.rendering = false;
         }
@@ -1400,7 +1426,7 @@ export function createPage(Component, options = {}) {
         await flushPromiseJobs();
         if (!dirty) return frame(tree);
       }
-      throw new Error('Effect update loop');
+      throw new Error('Effect update or redirect loop');
     } finally {
       keyEvent = undefined;
       contextMenuEvent = undefined;

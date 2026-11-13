@@ -92,7 +92,7 @@ copy('templates', 'templates');
 
 // 3. Tools. The toolchain contains Linux symlinks and executables, so on
 // Windows it is copied inside WSL. Copies are incremental.
-const tools = ['porf', 'local', 'skia-win', 'node-win', 'ada-win', 'node-host', 'ada'];
+const tools = ['porf', 'local', 'skia-win', 'node-win', 'ada-win', 'node-host', 'ada', 'http2-host', 'http2-win'];
 if (args.includes('--wasm')) tools.push('wasi-sdk', 'wasmtime', 'wasmtime-c-linux', 'ada-wasi');
 // the Android runtime's C API is optional (it needs the Android NDK; see native/wasm/README.md)
 if (args.includes('--wasm') && existsSync(join(toolsDir, 'wasmtime-c-android'))) tools.push('wasmtime-c-android');

@@ -13,6 +13,8 @@ mod config;
 mod css;
 mod lower;
 mod native;
+mod next;
+mod npm;
 mod scaffold;
 mod wasm;
 mod windows;
@@ -154,6 +156,7 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
     valid_name(&name)?;
     let mut outdir = absolute(settings.outdir.unwrap_or_else(|| PathBuf::from("dist/reactc")))?;
     if let Some(side) = project_side { outdir = outdir.join(side.label()); }
+    let next_app = !server && target != Target::Wasm && next::App::discover(&entry)?.is_some();
     Ok(Options {
         entry,
         outdir,
@@ -162,7 +165,7 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
         native: native && !emit_only,
         emit_c: native || emit_only,
         // Forms and HTTP need async page mode; configured clients default to it.
-        async_page: !server && (http_origin.is_some() || settings.async_page.unwrap_or(configured)),
+        async_page: !server && (http_origin.is_some() || settings.async_page.unwrap_or(configured) || next_app),
         http_origin,
         target,
         server,
