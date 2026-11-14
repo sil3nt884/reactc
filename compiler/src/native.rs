@@ -107,11 +107,16 @@ fn native_command(options: &Options, script: &str) -> Result<Command> {
     let (program, arguments) = words.split_first().context("empty build command")?;
     let bin = options.root.join("tools").join("mingw64").join("bin");
     let bundled = bin.join(format!("{program}.exe"));
-    let mut command = if bundled.is_file() { Command::new(bundled) } else { Command::new(program) };
+    let mut command = if bundled.is_file() { Command::new(&bundled) } else { Command::new(program) };
     let mut path = std::ffi::OsString::from(&bin);
     if let Some(existing) = std::env::var_os("PATH") {
         path.push(";");
         path.push(existing);
+    }
+    if bundled.is_file() && matches!(program.as_str(), "gcc" | "g++") {
+        // WinLibs can split the absolute default-manifest.o path at spaces.
+        // Prefer the same library directory relative to the toolchain root.
+        command.arg("-Btools/mingw64/x86_64-w64-mingw32/lib/");
     }
     command.args(arguments).current_dir(&options.root).env("PATH", path);
     Ok(command)
@@ -164,15 +169,6 @@ fn mingw(options: &Options, name: &str) -> String {
     if native_toolchain(options) { name.to_owned() } else { format!("x86_64-w64-mingw32-{name}") }
 }
 
-/// Node for the build scripts and, on the native Windows toolchain, Porffor.
-fn node(options: &Options) -> String {
-    if native_toolchain(options) {
-        shell_quote(&std::env::var("REACTC_NODE").unwrap_or_else(|_| "node".into()))
-    } else {
-        "node=$(ls tools/local/node-*/bin/node 2>/dev/null | head -n 1); node=${node:-node}; \"$node\"".to_owned()
-    }
-}
-
 fn porffor(options: &Options, input: &Path, c: &Path) -> Result<()> {
     let porf = match std::env::var("PORFFOR_BIN") {
         Ok(porf) => porf,
@@ -180,7 +176,13 @@ fn porffor(options: &Options, input: &Path, c: &Path) -> Result<()> {
             if !options.root.join("tools").join("porffor").join("runtime").join("index.js").is_file() {
                 bail!("Porffor's source is not installed in tools/porffor: run `npm run setup -- --native`");
             }
-            format!("{} src/porffor-node.mjs", node(options))
+            let bundled_node = options.root.join("tools").join("node").join("node.exe");
+            let node = match std::env::var("REACTC_NODE") {
+                Ok(node) => shell_quote(&node),
+                Err(_) if bundled_node.is_file() => tool(options, &bundled_node)?,
+                Err(_) => shell_quote("node"),
+            };
+            format!("{node} src/porffor-node.mjs")
         }
         Err(_) => "./tools/porf".into(),
     };
@@ -210,15 +212,17 @@ fn dgram_runtime(c: &Path) -> Result<()> {
 }
 
 /// @reactc/threads: rewrites Porffor's C so every thread runs this program in
-/// one shared heap (src/reactc-shared-heap/transform.mjs). Porffor's output is
-/// kept as app.porffor.c.
+/// one shared heap. Porffor's output is kept as app.porffor.c.
 fn shared_heap(options: &Options, c: &Path) -> Result<()> {
     let raw = options.outdir.join("app.porffor.c");
     std::fs::copy(c, &raw)?;
-    run(options, &format!(
-        "{} src/reactc-shared-heap/transform.mjs {} {}",
-        node(options), tool(options, &raw)?, tool(options, c)?,
-    )).context("could not build the shared heap for @reactc/threads")?;
+    let support = options.root.join("src").join("reactc-shared-heap");
+    let input = std::fs::read_to_string(&raw)?;
+    let prelude = std::fs::read_to_string(support.join("shared-prelude.h"))?;
+    let runtime = std::fs::read_to_string(support.join("shared-runtime.c"))?;
+    let output = crate::shared_heap::transform(&input, &prelude, &runtime)
+        .context("could not build the shared heap for @reactc/threads")?;
+    std::fs::write(c, output)?;
     println!("shared heap: {}", c.display());
     Ok(())
 }
@@ -777,13 +781,20 @@ fn link_windows(options: &Options) -> Result<PathBuf> {
     )?;
     let cc = std::env::var("WINDOWS_CC").unwrap_or_else(|_| mingw(options, "gcc"));
     let prefix = std::env::var("WINDOWS_BIN_PREFIX").unwrap_or_else(|_| mingw(options, ""));
+    // windres launches its preprocessor through cmd.exe. A path relative to
+    // the toolchain root works even when the package path contains spaces.
+    let preprocessor = if native_toolchain(options) && cc == "gcc" {
+        r"tools\mingw64\bin\gcc.exe"
+    } else {
+        &cc
+    };
     let core_object = out.join("core.o");
     let resources_object = out.join("resources.o");
     // -I root: the core may include src/reactc-ffi.h
     run(options, &format!("{cc} -O2 -Wno-attributes -I{} {ada_include} {node_include} -c {} -o {}", tool(options, &options.root)?, tool(options, &entry)?, tool(options, &core_object)?))
         .context("the Windows C compiler could not compile the application core")?;
     run(options, &format!(
-        "{prefix}windres --preprocessor={cc} --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED -i {} -o {}",
+        "{prefix}windres --preprocessor={preprocessor} --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED -i {} -o {}",
         tool(options, &resources_rc)?, tool(options, &resources_object)?
     ))
     .context("could not embed Skia into the executable")?;

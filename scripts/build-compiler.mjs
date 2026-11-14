@@ -16,8 +16,9 @@
 // --wasm also copies the WebAssembly toolchain (about 640 MB).
 // --smoke-native also compiles a native executable with the packaged compiler.
 //
-// Release builds (see .github/workflows/release.yml) assemble both packages on
-// Linux:
+// Release builds (see .github/workflows/release.yml):
+//   --native-windows        package Windows-native tools, including Node/npm
+//   --node-dir DIR         use this Windows Node distribution (default: current Node)
 //   --os windows|linux   the package's platform (default: this one)
 //   --exe PATH           a prebuilt compiler binary instead of cargo build
 //                        (reactc.exe from the Windows job)
@@ -43,6 +44,19 @@ if (!['windows', 'linux'].includes(packageOs)) throw new Error('--os must be win
 const exe = packageOs === 'windows' ? 'reactc.exe' : 'reactc';
 const prebuilt = option('--exe');
 const toolsDir = resolve(option('--tools') ?? join(checkout, 'tools'));
+const nativeWindows = args.includes('--native-windows');
+const nodeDir = resolve(option('--node-dir') ?? dirname(process.execPath));
+if (nativeWindows && (!windows || packageOs !== 'windows' || args.includes('--wasm'))) {
+  throw new Error('--native-windows requires Windows and packages the Windows x64 target only');
+}
+if (nativeWindows) {
+  for (const path of ['node.exe', 'LICENSE', 'npm.cmd', 'node_modules/npm/bin/npm-cli.js']) {
+    if (!existsSync(join(nodeDir, path))) throw new Error(`Missing ${path} in ${nodeDir}; use --node-dir with a Windows Node distribution`);
+  }
+  for (const path of ['mingw64/bin/gcc.exe', 'porffor/runtime/index.js', 'node-win/.native', 'ada-win/.native', 'http2-win/.native']) {
+    if (!existsSync(join(toolsDir, path))) throw new Error(`Missing ${path} in ${toolsDir}; run npm run setup -- --native`);
+  }
+}
 
 function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, { stdio: 'inherit', ...options });
@@ -97,7 +111,7 @@ copy('templates', 'templates');
 // only those, the package builds Windows programs and needs no WSL.
 const nativeTools = windows && packageOs === 'windows' && existsSync(join(toolsDir, 'mingw64', 'bin', 'gcc.exe'))
   ? ['mingw64', 'porffor'] : [];
-const linuxToolchain = nativeTools.length === 0 || existsSync(join(toolsDir, 'local'));
+const linuxToolchain = !nativeWindows && (nativeTools.length === 0 || existsSync(join(toolsDir, 'local')));
 const tools = linuxToolchain
   ? ['porf', 'local', 'skia-win', 'node-win', 'ada-win', 'node-host', 'ada', 'http2-host', 'http2-win']
   : ['skia-win', 'node-win', 'ada-win', 'http2-win'];
@@ -127,7 +141,18 @@ for (const tool of [...(linuxToolchain ? [] : tools), ...nativeTools]) {
   });
 }
 tools.push(...nativeTools);
-const requirements = nativeTools.length
+if (nativeWindows) {
+  const target = join(out, 'tools', 'node');
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(join(target, 'node_modules'), { recursive: true });
+  for (const file of ['node.exe', 'LICENSE', 'npm.cmd']) cpSync(join(nodeDir, file), join(target, file));
+  cpSync(join(nodeDir, 'node_modules', 'npm'), join(target, 'node_modules', 'npm'), { recursive: true });
+  tools.push('node');
+}
+const requirements = nativeWindows
+  ? 'This package includes the tools for Windows x64 builds, including Node and npm.\n' +
+    'Keep the entire extracted folder together. Builds and generated apps run without WSL.'
+  : nativeTools.length
   ? 'Builds of Windows programs use the bundled MinGW-w64 toolchain (`tools/mingw64`) and\n' +
     'run Porffor (`tools/porffor`) on Node 22.15 or newer, which must be on PATH (or\n' +
     'named by `REACTC_NODE`). They need no WSL.' +
@@ -159,7 +184,7 @@ ${exe} new C:\\path\\to\\my-app                          # a Node + React projec
 ${exe} new --list                                        # available templates
 ${exe} build App.tsx --name MyApp --title "My app"        # Windows UI: MyApp.exe
 ${exe} build server/index.ts --server --name MyServer    # Windows console server: MyServer.exe
-${exe} build                                             # uses reactc.config.json in this folder
+${exe} build${packageOs === 'windows' ? ' --target windows' : ''}                            # uses reactc.config.json in this folder
 ${exe} build --config path\\to\\reactc.config.json --only client
 \`\`\`
 
@@ -192,6 +217,36 @@ reactc ${version} packaged in ${out} (no self-test)`);
 }
 const scratch = mkdtempSync(join(tmpdir(), 'reactc-package-'));
 const packaged = join(out, 'bin', exe);
+if (nativeWindows) {
+  // A separate project, no compiler files or configuration pointing back at the checkout.
+  const project = join(scratch, 'project with spaces');
+  const source = join(project, 'src');
+  mkdirSync(source, { recursive: true });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !['PATH', 'REACTC_HOME', 'REACTC_WSL', 'REACTC_NODE', 'PORFFOR_BIN', 'PORFFOR_SOURCE'].includes(key.toUpperCase())));
+  env.PATH = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+  try {
+    writeFileSync(join(project, 'reactc.config.json'), JSON.stringify({
+      outDir: 'dist',
+      client: { folders: ['src'], entry: 'src/App.tsx', name: 'PackagedApp' },
+    }));
+    // A local package exercises npm auto-install without requiring registry access.
+    const dependency = join(project, 'dependency');
+    mkdirSync(dependency);
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'smoke-label', version: '1.0.0', main: 'index.js' }));
+    writeFileSync(join(dependency, 'index.js'), 'exports.label = "Packaged ReactC";\n');
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'smoke-label': 'file:dependency' } }));
+    writeFileSync(join(source, 'App.tsx'), 'import { label } from "smoke-label";\nexport default function App() { return <main>{label}</main>; }\n');
+    run(packaged, ['build', '--target', 'windows'], { cwd: project, env });
+    if (!existsSync(join(project, 'dist', 'windows', 'PackagedApp.exe'))) {
+      throw new Error('The packaged compiler produced no Windows executable');
+    }
+    console.log('Native self-test built PackagedApp.exe from reactc.config.json');
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  process.exit(0);
+}
 // a project from the packaged template, its client bundled
 const project = join(scratch, 'app');
 run(packaged, ['new', project], { cwd: scratch });

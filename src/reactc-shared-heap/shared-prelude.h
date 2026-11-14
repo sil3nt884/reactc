@@ -1,5 +1,5 @@
 /* Shared-heap threads (proof of concept): declarations injected at the top
- * of a Porffor program by poc/shared-heap/transform.mjs. Every thread runs the
+ * of a Porffor program by the ReactC compiler. Every thread runs the
  * same compiled program in one arena; see shared-runtime.c. */
 #include <stdint.h>
 #ifdef _WIN32

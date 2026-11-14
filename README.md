@@ -50,19 +50,33 @@ runs on.
 
 Each [release](../../releases) has the packaged toolchain:
 
-- `reactc-windows-x64.zip`: `bin/reactc.exe`. Builds run the bundled C
-  toolchain through WSL with Ubuntu 26.04. The programs it produces need no
-  WSL. (A package built from source after `npm run setup -- --native` needs
-  no WSL at all; see below.)
+- `reactc.exe` downloads and verifies the Windows build tools when first
+  needed. `reactc-offline.exe` carries the same tools in the executable and
+  can be renamed to `reactc.exe`.
+  Both reuse the unpacked tools in `%LOCALAPPDATA%\reactc\toolchains`.
+  Windows builds run without WSL or a separate Node installation.
+- `reactc-windows-x64.zip` contains the unpackable Windows toolchain and
+  its `bin/reactc.exe`.
 - `reactc-linux-x64.tar.gz`: `bin/reactc`, for Linux x86-64 with a glibc at
   least as new as Ubuntu 26.04's.
 
-Unpack, add `bin` to PATH, then:
+Put `reactc.exe` in your project folder, or add its directory to PATH.
+From the folder containing `reactc.config.json`, run:
+
+```powershell
+.\reactc.exe build --target windows
+```
+
+Use `reactc.exe build --target windows` when the executable is on PATH.
+The standalone executable also looks beside itself for the config when
+the current folder has none. An explicit `--config` takes precedence.
+
+For a new project:
 
 ```sh
 reactc new my-app      # a Node + React project, with @reactc/threads and @reactc/ui
 cd my-app
-npm run build          # Windows executables on Windows, Linux executables on Linux
+reactc build           # Windows executables on Windows, Linux executables on Linux
 ```
 
 `npm run build:windows` and `npm run build:linux` pick the target. See the

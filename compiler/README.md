@@ -503,9 +503,9 @@ a.join(); b.join();                                      // result, or the threa
 ```
 
 Importing it (also as `reactc:threads`) switches a server build to the shared
-heap. reactc runs `src/reactc-shared-heap/transform.mjs` over Porffor's C
-(kept as `app.porffor.c`) and links the thread runtime. It works for Windows
-and Linux targets, and the manifest records `"sharedHeap": true`. It cannot be
+heap. The Rust compiler transforms Porffor's C (kept as `app.porffor.c`) and
+links the thread runtime. It works for Windows and Linux targets, and the
+manifest records `"sharedHeap": true`. It cannot be
 combined with `worker_threads`/`fork` in one program. `run()` may be async:
 each thread runs its own event loop (timers, promise jobs and a libuv loop),
 and waiting in it is a safe region. A thread is also a promise (`await thread`,

@@ -16,6 +16,9 @@ mod native;
 mod next;
 mod npm;
 mod scaffold;
+mod shared_heap;
+#[cfg(windows)]
+mod standalone;
 mod wasm;
 mod windows;
 
@@ -116,6 +119,10 @@ fn default_root() -> Result<PathBuf> {
         return Ok(PathBuf::from(home));
     }
     if let Ok(executable) = std::env::current_exe() {
+        #[cfg(windows)]
+        if let Some(root) = standalone::home(&executable)? {
+            return Ok(root);
+        }
         for folder in executable.ancestors().skip(1).take(5) {
             if is_home(folder) {
                 return Ok(folder.to_path_buf());
@@ -258,14 +265,26 @@ fn parse_args() -> Result<(Vec<Options>, Option<PathBuf>)> {
     if config_path.is_none() && Path::new(config::FILE_NAME).is_file() {
         config_path = Some(PathBuf::from(config::FILE_NAME));
     }
+    if config_path.is_none() && entry.is_none() {
+        #[cfg(windows)]
+        {
+            let exe = std::env::current_exe()?;
+            if standalone::has_payload(&exe)? {
+                config_path = exe.parent().map(|folder| folder.join(config::FILE_NAME)).filter(|file| file.is_file());
+            }
+        }
+    }
     let Some(config_path) = config_path else {
         if only.is_some() { bail!("--only needs a configuration file"); }
         let entry = entry.with_context(|| format!("missing entry file (or a {} here)\n{USAGE}", config::FILE_NAME))?;
         return Ok((vec![resolve(entry, cli, Vec::new(), false, None, false)?], None));
     };
-    let project = config::load(&config_path)?;
+    let mut project = config::load(&config_path)?;
     eprintln!("reactc: using {}", project.path.display());
     let folder = absolute(config_path.clone())?.parent().map(Path::to_path_buf);
+    if let Some(folder) = &folder {
+        project.defaults.outdir.get_or_insert_with(|| folder.join("dist").join("reactc"));
+    }
     // --outdir names the folder itself; a configured outDir holds one folder per target.
     let target_folder = cli.outdir.is_none();
     if let Some(entry) = entry {
@@ -299,7 +318,7 @@ fn parse_args() -> Result<(Vec<Options>, Option<PathBuf>)> {
 
 /// Installs a project's npm dependencies before its first build, so the
 /// bundler (and editors) find them.
-fn install_dependencies(project: &Path) -> Result<()> {
+fn install_dependencies(project: &Path, root: &Path) -> Result<()> {
     let manifest = project.join("package.json");
     if !manifest.is_file() || project.join("node_modules").exists() { return Ok(()); }
     let package: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest)?)
@@ -307,7 +326,17 @@ fn install_dependencies(project: &Path) -> Result<()> {
     let has = |section: &str| package.get(section).and_then(|value| value.as_object()).is_some_and(|map| !map.is_empty());
     if !has("dependencies") && !has("devDependencies") { return Ok(()); }
     println!("Installing dependencies (first build only)...");
-    let mut npm = if cfg!(windows) {
+    let bundled_node = root.join("tools").join("node");
+    let npm_cli = bundled_node.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+    let node_exe = bundled_node.join("node.exe");
+    let mut npm = if cfg!(windows) && node_exe.is_file() && npm_cli.is_file() {
+        let mut command = std::process::Command::new(node_exe);
+        command.arg(npm_cli);
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let paths = std::iter::once(bundled_node).chain(std::env::split_paths(&path));
+        command.env("PATH", std::env::join_paths(paths)?);
+        command
+    } else if cfg!(windows) {
         let mut command = std::process::Command::new("cmd");
         command.args(["/C", "npm"]);
         command
@@ -402,7 +431,7 @@ async fn main() -> Result<()> {
         return start(&builds, project.as_deref());
     }
     if let Some(project) = &project {
-        install_dependencies(project)?;
+        install_dependencies(project, &builds[0].root)?;
     }
     let several = builds.len() > 1;
     for options in builds {

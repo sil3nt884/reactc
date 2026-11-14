@@ -10,6 +10,13 @@ tell whether an app is a good fit, and the conversion steps.
 
 ## 1. Set up reactc (once)
 
+On Windows, download `reactc.exe` from the [releases page](../../releases)
+and place it beside `reactc.config.json`. Run `.\reactc.exe build --target windows`
+from that folder. The first build downloads and caches the build tools.
+Use `reactc-offline.exe` to carry those tools inside the executable.
+
+To build reactc from source:
+
 On Windows, without WSL. Needs [Node.js](https://nodejs.org) 22.15 or newer,
 [Rust](https://rustup.rs) and [Git for Windows](https://git-scm.com).
 
