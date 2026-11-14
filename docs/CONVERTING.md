@@ -6,7 +6,8 @@ Vite, Next.js) builds only as far as its code and its packages stay within
 what reactc's runtime provides. This guide covers the one-time setup, how to
 tell whether an app is a good fit, and the conversion steps.
 
-[LIMITS.md](LIMITS.md) is the full list of what is not supported.
+See [JavaScript and Node.js compatibility](LIMITS.md) for language and runtime
+limits that also apply to your app's npm dependencies.
 
 ## 1. Set up reactc (once)
 

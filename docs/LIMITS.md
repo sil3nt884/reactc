@@ -1,7 +1,23 @@
 # reactc: known limits
 
-What reactc does not do yet, kept current as the compiler grows. Details are in the
-[compiler README](../compiler/README.md).
+JavaScript, Node.js, and React compatibility in reactc v0.1.0. See the
+[compiler README](../compiler/README.md) for build options and API details.
+
+## JavaScript and TypeScript
+
+reactc uses [Porffor alpha 22](https://github.com/CanadaHonk/porffor/releases/tag/alpha-22)
+to compile bundled JavaScript to C. Common language features include modules,
+classes, closures, promises, and `async`/`await`. The compiler strips
+TypeScript types and lowers JSX before passing the bundle to Porffor.
+There is no measured ECMAScript conformance percentage for reactc v0.1.0.
+
+- Runtime code generation with `eval` or `new Function` is unavailable.
+- `require()` calls with computed paths fail. Worker and fork entries must
+  use literal paths such as `./worker.js`.
+- Pure JavaScript npm packages can work when their language features and APIs
+  are supported. Packages that load native Node addons, such as `sqlite3`,
+  `bcrypt`, or `sharp`, require changes. You can call libraries with a C ABI
+  through [`@reactc/native`](../packages/reactc-native/README.md).
 
 ## What works end to end today
 
@@ -10,19 +26,20 @@ What reactc does not do yet, kept current as the compiler grows. Details are in 
 - **Servers:** `fetch` with all methods and headers, the Node API probe
   (31/31), `worker_threads`/`fork` as native threads, and `@reactc/threads`
   (shared heap, async `run()`, threads as promises).
+- **Existing React project.** A standalone React/Vite app with `useState`,
+  imported CSS, and an npm dependency built and rendered on Windows using
+  the published `reactc.exe` and a project-root `reactc.config.json`.
 
 ## Platforms and toolchain
 
-- **Hosts.** Windows (x64) and Linux (x86-64). Windows builds run the bundled C
-  toolchain (`tools/local`, an Ubuntu 26.04 sysroot with GCC 15 and MinGW-w64)
-  through WSL. That WSL distribution needs a glibc at least as new as the
-  sysroot's, so use Ubuntu 26.04. The executables reactc produces do not need
-  WSL.
-- **Windows without WSL.** `npm run setup -- --native` installs a native
-  MinGW-w64 GCC and Porffor's source, and Windows targets then build without
-  WSL (Node 22.15 or newer runs Porffor). Linux and WebAssembly targets are
-  not built this way. Its OpenSSL is a prebuilt 3.6 from MSYS2, not the
-  3.5 the WSL setup builds from source.
+- **Windows x64.** The standalone Windows release builds Windows apps with
+  the native MinGW-w64 toolchain and bundled Node and npm. The online
+  executable downloads and verifies the tools on first use. The offline
+  executable carries them inside it. Both cache the tools and build without WSL.
+  See [Download](../README.md#download).
+- **Linux and WebAssembly toolchains.** These use the Linux toolchain, which
+  needs a glibc at least as new as Ubuntu 26.04's. Windows source checkouts can
+  use this toolchain through WSL with Ubuntu 26.04.
 - **Linux runtime.** Linux executables that use Node APIs link libuv as a
   shared library: install `libuv1t64` (Ubuntu) on the machine that runs them.
 - **Targets.** Not covered: macOS, ARM64, Android, and the WASI target's Node
@@ -51,17 +68,10 @@ streams, cloning, and `blob()` and `formData()` readers.
   transport is limited to 64 KiB of UTF-8 and has no cookies, redirects or
   streaming.
 
-## npm packages and JavaScript
-
-- Node packages with native addons (`sqlite3`, `bcrypt`, `sharp` and similar)
-  cannot be compiled as they are. Their underlying C libraries can be called
-  directly with [`@reactc/native`](../packages/reactc-native/README.md).
-- Porffor has no `eval`/`new Function`, and dynamic `require` with computed
-  paths fails.
-- Worker and fork entries must be literal paths (`./file.js`).
-
 ## Node APIs
 
+- Coverage varies by module. The 31-case Node API probe exercises specific
+  behaviours.
 - Covered: `fs`, `fs/promises`, `stream`, `net`, `dgram` (UDP, in servers and
   UI apps), `child_process`, `zlib`, `crypto` (including WebCrypto and
   scrypt), `http`, `https`, `path`, `url`, `worker_threads`.
@@ -102,7 +112,13 @@ streams, cloning, and `blob()` and `formData()` readers.
 - **Callbacks.** At most 64 live callbacks, called on the JavaScript thread.
 - **Copies.** Buffers and strings are copied for each call.
 
-## React UI (native renderer, not a browser)
+## React UI and browser APIs
+
+The native renderer supports function components and hooks such as
+`useState`, `useEffect`, and `useContext`. React class components and several
+React APIs, including `useReducer` and `createPortal`, are unavailable.
+Browser tools such as Monaco and CodeMirror require DOM APIs that the native
+renderer does not provide. See the [React compatibility table](CONVERTING.md#2-check-whether-the-app-fits).
 
 - **Layout and styling.**
   - Borders are painted inside the box and do not push the content in.
@@ -117,8 +133,8 @@ streams, cloning, and `blob()` and `formData()` readers.
   - There is no arrow-key navigation in selects or radio groups.
   - Tab does not scroll focus into view inside nested scroll areas.
   - IME and screen readers are untested or absent.
-- **Not implemented.** Routing, Tailwind translation and most browser-API
-  bindings.
+- **Routing and browser tooling.** reactc reads Next.js App Router layouts.
+  React Router, Tailwind translation, and most browser APIs are unavailable.
 - **Component libraries.** Ones that rely on unsupported CSS (MUI and similar)
   will look off or fail to compile.
 - **Dialogs.** File dialogs are unavailable in the generic Windows host.
