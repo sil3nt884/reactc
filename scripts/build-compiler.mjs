@@ -179,8 +179,8 @@ another copy, or \`--root\` / \`"root"\` for a single build.
 - \`src/\`, \`native/\`: the runtime and the Windows host compiled into every app.
 - \`tools/\`: ${tools.join(', ')}.
 - \`packages/reactc-ui\`: React components for native window chrome and forms.
-- \`templates/\`: project templates for \`${exe} new\`. A generated project's
-  \`build.ps1\` and npm scripts use this compiler.
+- \`templates/\`: project templates for \`${exe} new\`. A generated project
+  is built and run with \`${exe} build\` and \`${exe} start\`.
 `);
 
 // 5. Self-test: the packaged compiler creates a project from its template in an

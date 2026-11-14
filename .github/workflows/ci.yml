@@ -81,10 +81,10 @@ jobs:
             --target linux --name fetch-http2 --outdir dist/ci/http2
           node scripts/ci/fetch-http2.mjs "$PWD/dist/ci/http2/fetch-http2" \
             "$PWD/dist/ci/http2/cert.pem" "$PWD/dist/ci/http2/key.pem"
-      - name: Generated Node + React project (npm run build:linux)
+      - name: Generated Node + React project (reactc build --target linux)
         run: |
-          export PATH="$PWD/tools/local/node-v22.16.0-linux-x64/bin:$PATH"
-          compiler/target/debug/reactc new dist/ci/app
+          export PATH="$PWD/tools/local/node-v22.16.0-linux-x64/bin:$PWD/compiler/target/debug:$PATH"
+          reactc new dist/ci/app
           cd dist/ci/app
           npm run build:linux
           # reactc's Linux servers link libuv dynamically, as Ubuntu installs it

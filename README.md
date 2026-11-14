@@ -19,7 +19,9 @@ your code becomes machine code.
 - **Projects.** `reactc new` creates a Node + React project that builds with
   `npm run build`.
 
-What does not work yet is listed in [docs/LIMITS.md](docs/LIMITS.md).
+What does not work yet is listed in [docs/LIMITS.md](docs/LIMITS.md). To
+bring an existing React app over, see
+[docs/CONVERTING.md](docs/CONVERTING.md).
 
 ## What kind of tool is it?
 

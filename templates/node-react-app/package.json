@@ -5,12 +5,12 @@
   "type": "module",
   "description": "A Node HTTP API and a React client, compiled by reactc into native executables for Windows and Linux.",
   "scripts": {
-    "build": "node scripts/reactc.mjs build",
-    "build:windows": "node scripts/reactc.mjs build --target windows",
-    "build:linux": "node scripts/reactc.mjs build --target linux",
-    "build:server": "node scripts/reactc.mjs build --only server",
-    "build:client": "node scripts/reactc.mjs build --only client",
-    "start": "node scripts/reactc.mjs start",
+    "build": "reactc build",
+    "build:windows": "reactc build --target windows",
+    "build:linux": "reactc build --target linux",
+    "build:server": "reactc build --only server",
+    "build:client": "reactc build --only client",
+    "start": "reactc start",
     "dev:server": "node server/index.ts",
     "test": "node --test server/*.test.ts shared/*.test.ts",
     "typecheck": "tsc --noEmit"

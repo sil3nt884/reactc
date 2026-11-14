@@ -49,10 +49,14 @@ root this way, so they run from any folder.
 
 `reactc new <folder> [--template NAME]` copies a template from reactc's
 `templates/` folder (`reactc new --list` shows them; `node-react-app` is the
-default). It points the copy's `reactc.config.json` `"root"` at this reactc,
-and names `package.json` after the folder. The project's `build.ps1` (needs
-only PowerShell: `-Only server|client`, `-Start`, `-NoBuild`) and its npm
-scripts find reactc through that `root`, then `REACTC_HOME`, then PATH.
+default). It names `package.json` after the folder and points the reactc
+libraries in it at this reactc. The project has no build scripts: in its
+folder, `reactc build [--target windows|linux] [--only server|client]`
+installs its npm dependencies on the first run and writes each target to its
+own folder (`dist/windows`, `dist/linux`), and `reactc start` runs the built
+server, waits for it, opens the client, and stops the server when the window
+closes. A `"root"` that does not name a reactc folder is reported and
+ignored: reactc uses its own files.
 
 ### Package the compiler
 

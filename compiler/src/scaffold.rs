@@ -1,8 +1,9 @@
 //! `reactc new <folder>`: start a project from one of reactc's templates.
 //!
-//! Templates are folders in `<reactc root>/templates`. The copy's
-//! `reactc.config.json` "root" points at the reactc that created it, so its
-//! build scripts use the same compiler; `package.json` takes the folder name.
+//! Templates are folders in `<reactc root>/templates`. The copy has no
+//! "root" in its `reactc.config.json`: the reactc that builds it finds its
+//! own files. Its `package.json` takes the folder name, and its reactc
+//! libraries point at this reactc.
 
 use std::path::{Path, PathBuf};
 
@@ -69,9 +70,9 @@ pub fn create(root: &Path, target: &Path, template: &str) -> Result<PathBuf> {
         bail!("{} already exists and is not empty", target.display());
     }
     let files = copy_tree(&source, target)?;
-    let root_text = root.to_string_lossy().trim_start_matches(r"\\?\").replace('\\', "/");
+    // A template's "root" is relative to the checkout; it means nothing in the copy.
     edit_json(&target.join("reactc.config.json"), |config| {
-        config.insert("root".into(), Value::String(root_text));
+        config.remove("root");
     })?;
     let manifest = target.join("package.json");
     if manifest.is_file() {
@@ -106,7 +107,7 @@ mod tests {
     }
 
     #[test]
-    fn copies_a_template_and_points_it_at_this_reactc() {
+    fn copies_a_template_and_points_its_libraries_at_this_reactc() {
         let base = std::env::temp_dir().join(format!("reactc-scaffold-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let template = base.join("root/templates/demo");
@@ -121,7 +122,7 @@ mod tests {
         let target = base.join("Shiny App");
         create(&root, &target, "demo").unwrap();
         let config: Value = serde_json::from_str(&std::fs::read_to_string(target.join("reactc.config.json")).unwrap()).unwrap();
-        assert_eq!(config["root"], root.to_string_lossy().replace('\\', "/"));
+        assert!(config.get("root").is_none());
         assert_eq!(config["target"], "windows");
         let package: Value = serde_json::from_str(&std::fs::read_to_string(target.join("package.json")).unwrap()).unwrap();
         let root_text = root.to_string_lossy().replace('\\', "/");

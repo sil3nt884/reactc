@@ -67,20 +67,26 @@ pub struct Options {
 }
 
 const USAGE: &str = "usage: reactc build [<entry>] [options]
+       reactc start [options]                  run the programs a configured project built
        reactc new <folder> [--template NAME]   start a project (templates: reactc new --list)
 
   <entry>                 a UI component (.tsx, .jsx, .ts, .js) or a server module
   --config FILE           read options from FILE (default: reactc.config.json in this folder, if present)
   --only server|client    with a configuration and no entry: build one side
   --server                build <entry> as a server
-  --target host|windows|wasm
-                          host: this machine's protocol program; windows: a Windows .exe
-                          (the default when reactc runs on Windows); wasm: a WASI module
+  --target windows|linux|wasm
+                          windows: a Windows .exe (the default when reactc runs on Windows);
+                          linux (or host): a Linux program; wasm: a WASI module
   --outdir DIR  --root DIR  --name NAME  --title TEXT  --http-origin URL
   --async-page  --react-compiler  --native  --emit-c
 
 Every option is also a reactc.config.json key (target, outDir, root, name, title, httpOrigin,
-asyncPage, reactCompiler, native, emitC). Command-line flags override the file.";
+asyncPage, reactCompiler, native, emitC). Command-line flags override the file.
+
+A project with a reactc.config.json needs no build scripts: `reactc build` installs its npm
+dependencies on the first run and writes each target to its own folder (<outDir>/windows,
+<outDir>/linux), and `reactc start` runs the server, then the client. reactc finds its own
+files from its executable or REACTC_HOME, so \"root\" is only for using another copy.";
 
 fn is_server_module(path: &Path) -> bool {
     path.file_stem().and_then(|name| name.to_str()).is_some_and(|name| name.ends_with(".server"))
@@ -111,12 +117,39 @@ fn default_root() -> Result<PathBuf> {
     }
     if let Ok(executable) = std::env::current_exe() {
         for folder in executable.ancestors().skip(1).take(5) {
-            if folder.join("src").join("page-runtime.js").is_file() {
+            if is_home(folder) {
                 return Ok(folder.to_path_buf());
             }
         }
     }
+    // A compiler built from a checkout and copied elsewhere still finds that checkout.
+    if let Some(checkout) = Path::new(env!("CARGO_MANIFEST_DIR")).parent().filter(|folder| is_home(folder)) {
+        return Ok(checkout.to_path_buf());
+    }
     Ok(std::env::current_dir()?)
+}
+
+/// Whether a folder holds reactc's own files.
+fn is_home(folder: &Path) -> bool {
+    folder.join("src").join("page-runtime.js").is_file()
+}
+
+/// The reactc folder a build uses: the configured one when it is a reactc
+/// folder, otherwise the one this compiler finds for itself. A project's
+/// "root" goes stale when the project or reactc moves, and that should not
+/// stop a build this compiler can do.
+fn home(configured: Option<PathBuf>) -> Result<PathBuf> {
+    let Some(configured) = configured else { return absolute(default_root()?) };
+    let configured = absolute(configured)?;
+    if is_home(&configured) { return Ok(configured); }
+    let found = absolute(default_root()?)?;
+    if !is_home(&found) {
+        bail!("{} is not a reactc folder (it has no src/page-runtime.js), and this reactc cannot find its own files. \
+            Remove \"root\" and set REACTC_HOME to the reactc folder, or run the reactc inside it (bin/reactc).",
+            configured.display());
+    }
+    eprintln!("reactc: \"root\" ({}) is not a reactc folder; using {}", configured.display(), found.display());
+    Ok(found)
 }
 
 fn absolute(path: PathBuf) -> Result<PathBuf> {
@@ -126,7 +159,7 @@ fn absolute(path: PathBuf) -> Result<PathBuf> {
 /// Turns merged settings into a build. `configured` marks builds that come
 /// from a configuration file, which always produce native output.
 fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, configured: bool,
-    project_side: Option<config::Side>) -> Result<Options> {
+    project_side: Option<config::Side>, target_folder: bool) -> Result<Options> {
     let entry = absolute(entry)?;
     let server = settings.server.unwrap_or(false) || is_server_module(&entry);
     let extension = entry.extension().and_then(|ext| ext.to_str()).unwrap_or("");
@@ -155,12 +188,20 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
     let name = settings.name.unwrap_or(stem);
     valid_name(&name)?;
     let mut outdir = absolute(settings.outdir.unwrap_or_else(|| PathBuf::from("dist/reactc")))?;
+    // A project's targets each get a folder, so one can be built after another.
+    if target_folder {
+        outdir = outdir.join(match target {
+            Target::Windows => "windows",
+            Target::Host => "linux",
+            Target::Wasm => "wasm",
+        });
+    }
     if let Some(side) = project_side { outdir = outdir.join(side.label()); }
     let next_app = !server && target != Target::Wasm && next::App::discover(&entry)?.is_some();
     Ok(Options {
         entry,
         outdir,
-        root: absolute(match settings.root { Some(root) => root, None => default_root()? })?,
+        root: home(settings.root)?,
         react_compiler: settings.react_compiler.unwrap_or(false),
         native: native && !emit_only,
         emit_c: native || emit_only,
@@ -181,11 +222,10 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
     })
 }
 
-fn parse_args() -> Result<Vec<Options>> {
-    let mut args = std::env::args().skip(1);
-    if args.next().as_deref() != Some("build") {
-        bail!("{USAGE}");
-    }
+/// The builds a `build` or `start` command line names, and the project folder
+/// when they come from a configuration file.
+fn parse_args() -> Result<(Vec<Options>, Option<PathBuf>)> {
+    let mut args = std::env::args().skip(2);
     let mut cli = config::Settings::default();
     let mut entry = None;
     let mut config_path = None;
@@ -221,10 +261,13 @@ fn parse_args() -> Result<Vec<Options>> {
     let Some(config_path) = config_path else {
         if only.is_some() { bail!("--only needs a configuration file"); }
         let entry = entry.with_context(|| format!("missing entry file (or a {} here)\n{USAGE}", config::FILE_NAME))?;
-        return Ok(vec![resolve(entry, cli, Vec::new(), false, None)?]);
+        return Ok((vec![resolve(entry, cli, Vec::new(), false, None, false)?], None));
     };
     let project = config::load(&config_path)?;
     eprintln!("reactc: using {}", project.path.display());
+    let folder = absolute(config_path.clone())?.parent().map(Path::to_path_buf);
+    // --outdir names the folder itself; a configured outDir holds one folder per target.
+    let target_folder = cli.outdir.is_none();
     if let Some(entry) = entry {
         // A single file: its folder decides the side and that side's options apply.
         if only.is_some() { bail!("--only applies when building the configured entries; omit the entry"); }
@@ -232,7 +275,7 @@ fn parse_args() -> Result<Vec<Options>> {
         let side_settings = side.and_then(|side| project.side(side)).map(|config| config.settings.clone()).unwrap_or_default();
         let settings = cli.over(&side_settings.over(&project.defaults));
         let forbidden = side.map(|side| project.forbidden(side)).unwrap_or_default();
-        return Ok(vec![resolve(entry, settings, forbidden, true, None)?]);
+        return Ok((vec![resolve(entry, settings, forbidden, true, None, target_folder)?], folder));
     }
     let mut builds = Vec::new();
     for side_config in &project.sides {
@@ -246,20 +289,121 @@ fn parse_args() -> Result<Vec<Options>> {
         // so a one-side build lands where a full build puts it.
         let several = project.sides.iter().filter(|side| side.entry.is_some()).count() > 1;
         builds.push(resolve(entry, settings, project.forbidden(side_config.side), true,
-            several.then_some(side_config.side))?);
+            several.then_some(side_config.side), target_folder)?);
     }
     if builds.is_empty() {
         bail!("{}: no entry to build; add \"entry\" to a section or pass a file", project.path.display());
     }
-    Ok(builds)
+    Ok((builds, folder))
+}
+
+/// Installs a project's npm dependencies before its first build, so the
+/// bundler (and editors) find them.
+fn install_dependencies(project: &Path) -> Result<()> {
+    let manifest = project.join("package.json");
+    if !manifest.is_file() || project.join("node_modules").exists() { return Ok(()); }
+    let package: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest)?)
+        .with_context(|| format!("{} is not valid JSON", manifest.display()))?;
+    let has = |section: &str| package.get(section).and_then(|value| value.as_object()).is_some_and(|map| !map.is_empty());
+    if !has("dependencies") && !has("devDependencies") { return Ok(()); }
+    println!("Installing dependencies (first build only)...");
+    let mut npm = if cfg!(windows) {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "npm"]);
+        command
+    } else {
+        std::process::Command::new("npm")
+    };
+    let status = npm.args(["install", "--no-audit", "--no-fund"]).current_dir(project).status()
+        .context("cannot run npm (install Node.js, or run `npm install` in the project yourself)")?;
+    if !status.success() { bail!("npm install failed in {}", project.display()); }
+    Ok(())
+}
+
+/// The executable a native build writes.
+fn executable(options: &Options) -> PathBuf {
+    match options.target {
+        Target::Windows => options.outdir.join(format!("{}.exe", options.name)),
+        Target::Host => options.outdir.join(if options.server { options.name.as_str() } else { "app" }),
+        Target::Wasm => options.outdir.join(format!("{}.wasm", options.name)),
+    }
+}
+
+/// `reactc start`: runs what `reactc build` wrote for a configured project.
+/// The server starts first, in the project folder; once the client's
+/// httpOrigin accepts connections the client opens, and closing it stops the
+/// server. A project with only one side runs that side.
+fn start(builds: &[Options], project: Option<&Path>) -> Result<()> {
+    let project = project.context("reactc start runs a configured project: add a reactc.config.json or pass --config")?;
+    let runs_here = |target: Target| match target {
+        Target::Windows => cfg!(windows),
+        Target::Host => cfg!(target_os = "linux"),
+        Target::Wasm => false,
+    };
+    if let Some(other) = builds.iter().find(|options| !runs_here(options.target)) {
+        bail!("{:?} programs do not run on this system; pass --target {}", other.target, if cfg!(windows) { "windows" } else { "linux" });
+    }
+    for options in builds {
+        if !executable(options).is_file() {
+            bail!("missing {}; run `reactc build` first", executable(options).display());
+        }
+    }
+    let server = builds.iter().find(|options| options.server);
+    // On Linux a client is a protocol program without a window of its own.
+    let client = builds.iter().find(|options| !options.server && options.target == Target::Windows);
+    let mut running = match server {
+        Some(server) => {
+            println!("server: {}", executable(server).display());
+            Some(std::process::Command::new(executable(server)).current_dir(project).spawn()
+                .with_context(|| format!("cannot start {}", executable(server).display()))?)
+        }
+        None => None,
+    };
+    let Some(client) = client else {
+        let Some(mut server) = running else { bail!("nothing to run: no server, and no client with a window for this target") };
+        println!("(Ctrl+C stops it)");
+        std::process::exit(server.wait()?.code().unwrap_or(1));
+    };
+    if let (Some(server), Some(origin)) = (running.as_mut(), client.http_origin.as_deref()) {
+        let address = origin.split("://").nth(1).unwrap_or(origin).trim_end_matches('/');
+        let address = if address.rsplit(']').next().is_some_and(|rest| rest.contains(':')) {
+            address.to_owned()
+        } else {
+            format!("{address}:{}", if origin.starts_with("https") { 443 } else { 80 })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while std::net::TcpStream::connect(&address).is_err() {
+            if let Some(status) = server.try_wait()? { bail!("the server exited ({status}) before answering at {origin}"); }
+            if std::time::Instant::now() > deadline {
+                let _ = server.kill();
+                bail!("the server did not answer at {origin}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+    println!("client: {}", executable(client).display());
+    let status = std::process::Command::new(executable(client)).current_dir(&client.outdir).status()
+        .with_context(|| format!("cannot start {}", executable(client).display()));
+    if let Some(mut server) = running { let _ = server.kill(); }
+    std::process::exit(status?.code().unwrap_or(1));
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if std::env::args().nth(1).as_deref() == Some("new") {
+    let command = std::env::args().nth(1);
+    if command.as_deref() == Some("new") {
         return new_project();
     }
-    let builds = parse_args()?;
+    if !matches!(command.as_deref(), Some("build" | "start")) {
+        bail!("{USAGE}");
+    }
+    let (builds, project) = parse_args()?;
+    if command.as_deref() == Some("start") {
+        return start(&builds, project.as_deref());
+    }
+    if let Some(project) = &project {
+        install_dependencies(project)?;
+    }
     let several = builds.len() > 1;
     for options in builds {
         if several {
@@ -300,9 +444,9 @@ fn new_project() -> Result<()> {
     println!("
 Next:
   cd \"{shown}\"
-  powershell -ExecutionPolicy Bypass -File build.ps1 -Start    # compile the server and client, then run them
-  npm run dev:server                                            # or: run the server under Node while you work
-  npm run build                                                 # the same build through npm
+  reactc build                 # compile the server and the client (--target windows|linux, --only server|client)
+  reactc start                 # run them: the server, then the client
+  npm run dev:server           # or: run the server under Node while you work
 See README.md in the project.");
     Ok(())
 }
@@ -429,8 +573,8 @@ async fn build(options: &Options) -> Result<()> {
     });
     std::fs::write(options.outdir.join("manifest.json"), serde_json::to_string_pretty(&manifest)?)?;
     if options.native {
-        let executable = native::link(options)?;
-        println!("native executable -> {}", executable.display());
+        let linked = native::link(options)?;
+        println!("native executable -> {}", linked.display());
     }
     Ok(())
 }

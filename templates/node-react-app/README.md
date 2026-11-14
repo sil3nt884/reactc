@@ -16,7 +16,7 @@ Both are `file:` dependencies on the reactc that created the project.
 
 ```
 reactc.config.json   which folders are server, client and shared; build options
-package.json         npm scripts
+package.json         dependencies, and npm scripts that call reactc
 server/              Node HTTP API (TypeScript)
   index.ts           HTTP entry: reads JSON bodies, calls the router
   router.ts          the API as a plain function, so it can be unit-tested
@@ -27,34 +27,32 @@ client/              React UI (TypeScript + CSS)
   api.ts             fetch calls to the server
   TaskRow.tsx  App.css
 shared/              code both sides import (types, port, validation)
-scripts/reactc.mjs   finds reactc, builds, and runs the executables
 ```
 
 ## Commands
 
-Run these from this folder: in PowerShell on Windows, or a shell on Linux.
-`build.ps1` needs only PowerShell. The npm scripts need Node, and the first
-build runs `npm install` for the libraries.
+The project has no build scripts of its own: `reactc` reads
+`reactc.config.json` and does the rest. Run these from this folder, with
+reactc's `bin` folder on PATH.
 
 | Command | What it does |
 | --- | --- |
-| `powershell -ExecutionPolicy Bypass -File build.ps1` | Compiles the server and the client. `-Only server` or `-Only client` compiles one side. |
-| `powershell -ExecutionPolicy Bypass -File build.ps1 -Start` | Compiles, then runs both executables (add `-NoBuild` to run the last build). |
+| `reactc build` | Compiles the server and the client for this system: Windows executables on Windows, Linux executables on Linux (a few minutes). The first build runs `npm install` for the libraries. |
+| `reactc build --target windows` / `--target linux` | Compiles for that system, from either system, into `dist/windows` or `dist/linux`. |
+| `reactc build --only server` / `--only client` | Compiles one side. |
+| `reactc start` | On Windows: starts `TasksServer.exe` in this folder, waits for it to accept connections, opens `Tasks.exe`, and stops the server when the window closes. On Linux: runs the API server. Tasks are saved in `tasks.json`. |
 | `npm run dev:server` | Runs the API under Node 23+ (TypeScript runs directly), for quick changes. |
 | `npm test` | Unit tests for the router and shared validation (Node's test runner). |
-| `npm run build` | Compiles the server and the client for this system: Windows executables on Windows, Linux executables on Linux (a few minutes). |
-| `npm run build:windows` / `npm run build:linux` | Compiles for that system, from either system (into `dist/windows` or `dist/linux`). |
-| `npm run build:server` / `build:client` | Compiles one side. |
-| `npm start` | On Windows: starts `TasksServer.exe`, waits for it, opens `Tasks.exe`, and stops the server when the window closes. On Linux: runs the API server. Tasks are saved in `data/tasks.json`. |
-| `npm install`, then `npm run typecheck` | Optional: TypeScript checking and editor types. Building needs no install. |
+| `npm run typecheck` | TypeScript checking (after `npm install`). |
+
+`npm run build`, `build:windows`, `build:linux`, `build:server`,
+`build:client` and `npm start` call the same commands.
 
 Create a project from this template with `reactc new C:\path\to\my-app`, or
-with `npm run new-app -- C:\path\to\my-app` in the reactc checkout. The new
-project's `reactc.config.json` `"root"` points at the reactc that created it.
-That is either a packaged compiler (`npm run build:compiler` in the checkout
-makes `dist/reactc`), whose `bin/reactc.exe` is used directly, or the
-checkout, where the first build also builds reactc. Without `root`, the
-scripts use `REACTC_HOME` or `reactc` on PATH.
+with `npm run new-app -- C:\path\to\my-app` in the reactc checkout. reactc
+finds its own files (runtime, toolchain, libraries) from its executable, or
+from `REACTC_HOME`. A `"root"` in `reactc.config.json` selects another reactc
+folder; when it does not name one, reactc says so and uses its own.
 
 ## Build something
 
