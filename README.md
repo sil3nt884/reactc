@@ -58,7 +58,14 @@ Each [release](../../releases) has the packaged toolchain:
 - `reactc-windows-x64.zip` contains the unpackable Windows toolchain and
   its `bin/reactc.exe`.
 - `reactc-linux-x64.tar.gz`: `bin/reactc`, for Linux x86-64 with a glibc at
-  least as new as Ubuntu 26.04's.
+  least as new as Ubuntu 26.04's. The archive includes the C toolchain, Node,
+  and npm. For an offline build, install any registry dependencies the
+  project needs before going offline.
+
+Use `reactc pack App.wasm --target windows` to make a self-contained Windows
+WASM app. Use `reactc build --target android --only client` from a configured
+project to produce a signed arm64 APK. See the
+[platform setup and packaging instructions](native/wasm/README.md).
 
 Put `reactc.exe` in your project folder, or add its directory to PATH.
 From the folder containing `reactc.config.json`, run:
@@ -97,7 +104,7 @@ them. Elsewhere, install them from npm or from a release:
 
 ```sh
 npm install @reactc/threads
-npm install https://github.com/sil3nt884/reactc/releases/download/v0.1.0/reactc-threads-0.1.0.tgz
+npm install https://github.com/sil3nt884/reactc/releases/download/v0.2.0/reactc-threads-0.2.0.tgz
 ```
 
 ## Build from source

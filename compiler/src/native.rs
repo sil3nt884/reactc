@@ -140,20 +140,10 @@ fn run(options: &Options, script: &str) -> Result<()> {
         );
         Command::new("wsl.exe").args(["-e", "bash", "-c", &script]).output()
     } else {
-        // Like the WSL path above: the bundled toolchain's sysroot has the
-        // headers and libraries reactc links (libuv, OpenSSL, zlib, ...),
-        // so it comes before whatever cc/c++ the system has, if any.
-        let mut command = Command::new("sh");
-        let local = root.join("tools/local/bin");
-        if local.is_dir() {
-            let mut path = std::ffi::OsString::from(local);
-            if let Some(existing) = std::env::var_os("PATH") {
-                path.push(":");
-                path.push(existing);
-            }
-            command.env("PATH", path);
-        }
-        command.arg("-c").arg(script).current_dir(root).output()
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let paths = std::iter::once(root.join("tools/local/bin")).chain(std::env::split_paths(&path));
+        Command::new("sh").arg("-c").arg(script).current_dir(root)
+            .env("PATH", std::env::join_paths(paths)?).output()
     }
     .with_context(|| format!("cannot start the native toolchain ({})", script.split(' ').next().unwrap_or_default()))?;
     if !output.status.success() {
@@ -476,6 +466,7 @@ pub fn link(options: &Options) -> Result<PathBuf> {
         Target::Windows if options.server => link_windows_server(options),
         Target::Windows => link_windows(options),
         Target::Wasm => link_wasm(options),
+        Target::Android => unreachable!("Android pages link as WASM before packaging"),
     }
 }
 
@@ -487,6 +478,7 @@ fn ada_link_args(options: &Options, source: &str) -> Result<(String, String)> {
         Target::Host => ("ada", "", "-lstdc++"),
         Target::Windows => ("ada-win", " --windows", "-lstdc++"),
         Target::Wasm => ("ada-wasi", " --wasi", "-lc++ -lc++abi"),
+        Target::Android => unreachable!("Android pages link as WASM before packaging"),
     };
     let ada = options.root.join("tools").join(directory);
     let object = ada.join("ada.o");
@@ -570,14 +562,22 @@ fn node_link_args(options: &Options, source: &str) -> Result<(String, String)> {
         )).context("could not compile Porffor's uWebSockets bridge")?;
         link_flags.push_str(&format!(" {} {} -lstdc++", tool(options, &object)?, tool(options, &archive)?));
     }
-    if zlib { link_flags.push_str(" -lz -lbrotlienc -lbrotlidec -lbrotlicommon -lzstd"); }
+    // The packaged sysroot has these archives even on systems without the
+    // matching runtime packages. Keep their use tied to the packaged compiler.
+    let bundled_host = !windows && std::env::var_os("CC").is_none()
+        && options.root.join("tools/local/bin/cc").is_file();
+    if zlib {
+        if bundled_host { link_flags.push_str(" -Wl,-Bstatic"); }
+        link_flags.push_str(" -lz -lbrotlienc -lbrotlidec -lbrotlicommon -lzstd");
+        if bundled_host { link_flags.push_str(" -Wl,-Bdynamic"); }
+    }
     if ssl { link_flags.push_str(" -lssl"); }
     if crypto {
         link_flags.push_str(" -lcrypto");
         if windows { link_flags.push_str(" -lcrypt32 -lbcrypt"); }
     }
     if uv {
-        link_flags.push_str(" -luv");
+        link_flags.push_str(if bundled_host { " -Wl,-Bstatic -luv -Wl,-Bdynamic" } else { " -luv" });
         if windows {
             link_flags.push_str(" -lws2_32 -lpsapi -liphlpapi -luserenv -ldbghelp -lole32 -ladvapi32 -luser32 -lsynchronization");
         } else {
@@ -855,6 +855,95 @@ fn link_windows(options: &Options) -> Result<PathBuf> {
     .context("could not link the application with its Skia host")?;
     copy_angle(options, &source)?;
     Ok(executable)
+}
+
+pub fn pack_windows(options: &Options, module: &Path) -> Result<PathBuf> {
+    let skia = options.root.join("tools/skia-win");
+    let runtime = options.root.join("tools/wasmtime-pack-windows");
+    let wasmtime = runtime.join("wasmtime.exe");
+    if !wasmtime.is_file() {
+        bail!("Windows Wasmtime is missing; run `sh tools/install-wasmtime.sh windows`");
+    }
+    let library = skia.join("libSkiaSharp.dll");
+    if !library.is_file() {
+        bail!("native Skia is missing; run `sh tools/install-skia-windows.sh`");
+    }
+    struct WorkDir(PathBuf);
+    impl Drop for WorkDir {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+    let work = options.outdir.join(format!(".reactc-wasm-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&work)?;
+    let work = WorkDir(work);
+    let out = &work.0;
+    let aot_compiler = if native_toolchain(options) {
+        wasmtime.clone()
+    } else {
+        options.root.join("tools/wasmtime-pack-linux/wasmtime")
+    };
+    if !aot_compiler.is_file() {
+        bail!("Linux Wasmtime is missing; run `sh tools/install-wasmtime.sh linux`");
+    }
+    let precompiled = out.join("app.cwasm");
+    run(options, &format!(
+        "{} compile --target x86_64-pc-windows-msvc -W exceptions=y -O opt-level=0 {} -o {}",
+        tool(options, &aot_compiler)?, tool(options, module)?, tool(options, &precompiled)?
+    )).context("could not precompile the WASM module for Windows x64")?;
+    let title: String = options.title.chars()
+        .filter(|c| !c.is_control()).collect::<String>()
+        .replace('\\', "\\\\").replace('"', "\\\"");
+    let scope = module.to_string_lossy().bytes().fold(0xcbf29ce484222325u64, |hash, byte|
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3));
+    let source = out.join("wasm-launcher.c");
+    std::fs::write(&source, format!(
+        "#define NATIVE_APP 1\n#define NATIVE_WASM_APP 1\n#define NATIVE_APP_TITLE L\"{title}\"\n#define NATIVE_APP_STORAGE_SCOPE L\"{}-{scope:016x}\"\n#include \"native/windows/app.c\"\n",
+        options.name
+    ))?;
+    let notices = out.join("wasm-notices.txt");
+    let mut text = String::new();
+    for file in [skia.join("LICENSE.txt"), skia.join("THIRD-PARTY-NOTICES.txt"),
+        skia.join("PORFFOR-LICENSE.txt"), runtime.join("LICENSE")]
+    {
+        text.push_str(&std::fs::read_to_string(&file).with_context(|| format!("cannot read {}", file.display()))?);
+        text.push('\n');
+    }
+    std::fs::write(&notices, text)?;
+    let resources = out.join("wasm-resources.rc");
+    let mut script = String::new();
+    for (id, path) in [(101, library.as_path()), (102, notices.as_path()), (103, wasmtime.as_path()), (104, precompiled.as_path())] {
+        let path = build_path(options, path)?.replace('\\', "\\\\").replace('"', "\\\"");
+        script.push_str(&format!("{id} RCDATA \"{path}\"\n"));
+    }
+    std::fs::write(&resources, script)?;
+    let object = out.join("wasm-resources.o");
+    let cc = std::env::var("WINDOWS_CC").unwrap_or_else(|_| mingw(options, "gcc"));
+    let prefix = std::env::var("WINDOWS_BIN_PREFIX").unwrap_or_else(|_| mingw(options, ""));
+    let preprocessor = if native_toolchain(options) && cc == "gcc" { r"tools\mingw64\bin\gcc.exe" } else { &cc };
+    run(options, &format!(
+        "{prefix}windres --preprocessor={preprocessor} --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED -i {} -o {}",
+        tool(options, &resources)?, tool(options, &object)?
+    )).context("could not embed the WASM module and runtime")?;
+    let packed = out.join("app.exe");
+    run(options, &format!(
+        "{cc} -O2 -static -municode -mwindows -D_WIN32_WINNT=0x0A00 -I{} {} {} -luser32 -lgdi32 -lcomdlg32 -lshell32 -lshlwapi -ladvapi32 -lwinhttp -lbcrypt -lm -o {}",
+        tool(options, &options.root)?, tool(options, &source)?, tool(options, &object)?, tool(options, &packed)?
+    )).context("could not link the Windows WASM launcher")?;
+    let executable = options.outdir.join(format!("{}.exe", options.name));
+    std::fs::rename(packed, &executable)?;
+    Ok(executable)
+}
+
+pub fn pack_android(options: &Options, module: &Path) -> Result<PathBuf> {
+    let apk = options.outdir.join(format!("{}.apk", options.name));
+    run(options, &format!(
+        "python3 {} {} {} {} {} {} {}",
+        tool(options, &options.root.join("native/android/pack.py"))?,
+        tool(options, module)?, tool(options, &apk)?, shell_quote(&options.name),
+        shell_quote(&options.title), shell_quote(options.http_origin.as_deref().unwrap_or("")),
+        tool(options, &options.root)?,
+    )).context("could not package the Android APK")?;
+    Ok(apk)
 }
 
 #[cfg(test)]
