@@ -1,6 +1,6 @@
 {
   "name": "@reactc/threads",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Java-style shared-memory threads for reactc-compiled programs",
   "keywords": [
     "threads",
