@@ -51,6 +51,7 @@ pub struct Settings {
     pub react_compiler: Option<bool>,
     pub native: Option<bool>,
     pub emit_c: Option<bool>,
+    pub console: Option<bool>,
     pub name: Option<String>,
     pub title: Option<String>,
     pub async_page: Option<bool>,
@@ -68,6 +69,7 @@ impl Settings {
             react_compiler: self.react_compiler.or(base.react_compiler),
             native: self.native.or(base.native),
             emit_c: self.emit_c.or(base.emit_c),
+            console: self.console.or(base.console),
             name: self.name.or_else(|| base.name.clone()),
             title: self.title.or_else(|| base.title.clone()),
             async_page: self.async_page.or(base.async_page),
@@ -79,7 +81,7 @@ impl Settings {
 
 /// Option keys accepted at the top level and in either section.
 const OPTION_KEYS: &[&str] = &[
-    "target", "outDir", "root", "reactCompiler", "native", "emitC", "name", "title", "asyncPage", "httpOrigin",
+    "target", "outDir", "root", "reactCompiler", "native", "emitC", "console", "name", "title", "asyncPage", "httpOrigin",
 ];
 /// Options that only apply to user interfaces.
 const CLIENT_ONLY: &[&str] = &["title", "asyncPage", "httpOrigin", "reactCompiler"];
@@ -159,6 +161,7 @@ fn settings(object: &Map<String, Value>, base: &Path, context: &str) -> Result<S
         react_compiler: boolean(object, "reactCompiler", context)?,
         native: boolean(object, "native", context)?,
         emit_c: boolean(object, "emitC", context)?,
+        console: boolean(object, "console", context)?,
         name: string(object, "name", context)?,
         title: string(object, "title", context)?,
         async_page: boolean(object, "asyncPage", context)?,

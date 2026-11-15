@@ -42,6 +42,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: PixiJS plain canvas probe
+        run: |
+          npm ci --prefix scripts/ci/pixi
+          npm test --prefix scripts/ci/pixi
       - name: Template unit tests (libraries under Node)
         working-directory: templates/node-react-app
         run: npm install --no-audit --no-fund && npm test

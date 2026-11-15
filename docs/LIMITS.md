@@ -120,6 +120,12 @@ React APIs, including `useReducer` and `createPortal`, are unavailable.
 Browser tools such as Monaco and CodeMirror require DOM APIs that the native
 renderer does not provide. See the [React compatibility table](CONVERTING.md#2-check-whether-the-app-fits).
 
+Windows programs can import `reactc:canvas` for an offscreen Canvas2D and
+ANGLE WebGL subset. The [native PixiJS probes](../scripts/ci/pixi/README.md)
+cover native Win32 presentation, WebGL 2 renderer selection, PNG textures,
+ticker animation, resize and PixiJS pointer events. The WebGL probe also checks
+indexed textured geometry, offscreen framebuffers and pixel readback.
+
 - **Layout and styling.**
   - Borders are painted inside the box and do not push the content in.
   - Absolutely positioned children inside CSS-styled boxes stay in the

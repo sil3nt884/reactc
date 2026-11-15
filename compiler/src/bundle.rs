@@ -12,7 +12,7 @@ use rolldown::plugin::{
     HookResolveIdReturn, HookUsage, Plugin, PluginContext, SharedLoadPluginContext,
 };
 use rolldown::{
-    Bundler, BundlerOptions, InjectImport, InlineConstOption, InputItem, ModuleType, OptimizationOption,
+    Bundler, BundlerOptions, CodeSplittingMode, InjectImport, InlineConstOption, InputItem, ModuleType, OptimizationOption,
     OutputFormat, Platform, ResolveOptions,
 };
 
@@ -44,6 +44,7 @@ fn server_library(specifier: &str, windows: bool) -> Option<(&'static str, &'sta
         "reactc:threads" | "@reactc/threads" => Some(("reactc:threads", "../packages/reactc-threads/src/index.js")),
         // Native library calls; importing them compiles the FFI runtime in.
         "reactc:native" | "@reactc/native" => Some(("reactc:native", "../packages/reactc-native/src/index.js")),
+        "reactc:canvas" => Some(("reactc:canvas", "native-canvas.js")),
         // UDP sockets on libuv (Porffor has no node:dgram)
         "dgram" => Some(("dgram", "node-net/dgram.js")),
         // fetch over node:net and node:tls, with native HTTP/2 framing.
@@ -123,6 +124,12 @@ impl Plugin for NativePlugin {
     }
 
     async fn resolve_id(&self, _ctx: &PluginContext, args: &HookResolveIdArgs<'_>) -> HookResolveIdReturn {
+        if args.specifier == "reactc:canvas" {
+            if !self.windows {
+                bail!("reactc:canvas requires the Windows target");
+            }
+            return Ok(Some(HookResolveIdOutput::from_id(format!("{LIB_ID}reactc:canvas"))));
+        }
         if self.server {
             if args.specifier == WORKER_ENTRY_ID || args.specifier.starts_with(LIB_ID) {
                 return Ok(Some(HookResolveIdOutput::from_id(args.specifier)));
@@ -271,7 +278,8 @@ impl Plugin for NativePlugin {
             return Ok(Some(HookLoadOutput { code: code.into(), module_type: Some(ModuleType::Js), ..Default::default() }));
         }
         let portable_path = args.id.replace('\\', "/");
-        if self.server && extension == "js" && (portable_path.contains("/node_modules/find-my-way/lib/") ||
+        let event_emitter = portable_path.ends_with("/node_modules/eventemitter3/index.js");
+        if event_emitter || self.server && extension == "js" && (portable_path.contains("/node_modules/find-my-way/lib/") ||
             portable_path.ends_with("/node_modules/zod/v4/core/util.js") ||
             portable_path.ends_with("/node_modules/pg/lib/crypto/utils.js")) {
             let source = std::fs::read_to_string(path)?;
@@ -435,6 +443,8 @@ pub async fn bundle(options: &Options) -> Result<Report> {
             }]),
             cwd: Some(options.root.clone()),
             format: Some(if options.server { OutputFormat::Cjs } else { OutputFormat::Iife }),
+            // Porffor consumes one bundle. Keep resolved import() calls inside it.
+            code_splitting: Some(CodeSplittingMode::Bool(false)),
             name: Some("NativeApp".into()),
             platform: Some(if options.server { Platform::Node } else { Platform::Neutral }),
             // Neutral selects neither browser shims nor a package entry by

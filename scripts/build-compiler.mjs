@@ -111,6 +111,7 @@ copy('templates', 'templates');
 // only those, the package builds Windows programs and needs no WSL.
 const nativeTools = windows && packageOs === 'windows' && existsSync(join(toolsDir, 'mingw64', 'bin', 'gcc.exe'))
   ? ['mingw64', 'porffor'] : [];
+if (nativeTools.length && existsSync(join(toolsDir, 'angle-win'))) nativeTools.push('angle-win');
 const linuxToolchain = !nativeWindows && (nativeTools.length === 0 || existsSync(join(toolsDir, 'local')));
 const tools = linuxToolchain
   ? ['porf', 'local', 'skia-win', 'node-win', 'ada-win', 'node-host', 'ada', 'http2-host', 'http2-win']

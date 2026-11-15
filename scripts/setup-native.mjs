@@ -39,6 +39,10 @@ const OPENSSL = {
   sha256: '773e021ebad83f14b5c103db467411e8ff064663e1c7e7f730e2be72f4117064',
 };
 const PORFFOR = { url: 'https://github.com/CanadaHonk/porffor.git', commit: 'a081ebd71177b898b2859298376e3191f088af32' };
+const ANGLE = {
+  url: 'https://mirror.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-angleproject-2.1.r25748.890b5d8f-6-any.pkg.tar.zst',
+  sha256: '3c184061a3a3ef6478055e11eb786e20c40e62c1c239a1d65bf1399b7e2e7113',
+};
 
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', ...options });
 const step = text => console.log('\n== ' + text);
@@ -112,6 +116,18 @@ export async function setupNative() {
     must('git', ['init', '-q', porffor]);
     must('git', ['-C', porffor, 'fetch', '--quiet', '--depth=1', PORFFOR.url, PORFFOR.commit]);
     must('git', ['-C', porffor, '-c', 'advice.detachedHead=false', 'checkout', '--quiet', '--detach', 'FETCH_HEAD']);
+  }
+
+  const angle = join(tools, 'angle-win');
+  if (!existsSync(join(angle, 'ucrt64', 'share', 'licenses', 'angleproject', 'LICENSE'))) {
+    step('ANGLE graphics runtime (tools/angle-win)');
+    const archive = await download(ANGLE);
+    const unpacked = join(downloads, 'angle.tar');
+    writeFileSync(unpacked, zlib.zstdDecompressSync(readFileSync(archive)));
+    mkdirSync(angle, { recursive: true });
+    must(tar, ['-xf', unpacked, '-C', angle, 'ucrt64/bin/libEGL.dll', 'ucrt64/bin/libGLESv2.dll',
+      'ucrt64/share/licenses/angleproject/LICENSE']);
+    rmSync(unpacked);
   }
 
   // The install scripts run in Git's sh with the toolchain first on PATH.

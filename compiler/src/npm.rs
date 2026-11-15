@@ -1,4 +1,4 @@
-//! Ahead-of-time alternatives for npm dependencies that generate code at runtime.
+//! Native compiler compatibility for npm dependencies.
 
 use std::path::Path;
 
@@ -7,6 +7,16 @@ use regex::{NoExpand, Regex};
 
 pub fn lower(path: &Path, source: &str) -> Result<Option<String>> {
     let path = path.to_string_lossy().replace('\\', "/");
+    if path.ends_with("/node_modules/eventemitter3/index.js") {
+        // Porffor exposes the internal prototype as __proto__ even when
+        // Object.prototype is absent. Test the explicit null prototype instead.
+        // Pixi reads the emitter's listener table using unprefixed event names.
+        let probe = "if (!new Events().__proto__) prefix = false;";
+        if source.contains(probe) {
+            return Ok(Some(source.replace(probe,
+                "if (Object.getPrototypeOf(Events.prototype) === null) prefix = false;")));
+        }
+    }
     if path.ends_with("/node_modules/pg/lib/crypto/utils.js") && source.contains("subtleCrypto.importKey('raw'") {
         // Node's OpenSSL functions provide the same SCRAM primitives, including
         // PBKDF2 key import and derivation which Porffor's WebCrypto lacks.

@@ -108,6 +108,12 @@ fn native_command(options: &Options, script: &str) -> Result<Command> {
     let bin = options.root.join("tools").join("mingw64").join("bin");
     let bundled = bin.join(format!("{program}.exe"));
     let mut command = if bundled.is_file() { Command::new(&bundled) } else { Command::new(program) };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     let mut path = std::ffi::OsString::from(&bin);
     if let Some(existing) = std::env::var_os("PATH") {
         path.push(";");
@@ -351,6 +357,12 @@ pub fn emit(options: &Options, js: &Path) -> Result<Vec<&'static str>> {
         dgram_runtime(&c)?;
     }
     let mut original = std::fs::read_to_string(&c)?;
+    if original.contains("reactc_canvas_create(") {
+        let marker = "} jsval;\n";
+        let at = original.find(marker).context("Porffor's C has no jsval type for native canvas")? + marker.len();
+        original.insert_str(at, "#include \"src/reactc-canvas.h\"\n");
+        std::fs::write(&c, &original)?;
+    }
     if original.contains("reactc_h2_open();") {
         let marker = "static char *porf_uv_buf;\n";
         let at = original.find(marker).context("HTTP/2 needs Porffor's networking backend")? + marker.len();
@@ -416,10 +428,10 @@ pub fn emit(options: &Options, js: &Path) -> Result<Vec<&'static str>> {
     }
     if options.server {
         let threads = if options.threads { "#include \"src/reactc-threads.h\"\n" } else { "" };
-        // A console program: the compiled server is the whole executable.
+        // The compiled program owns the process in either subsystem.
         std::fs::write(
             out.join("server.c"),
-            format!("/* Windows console entry for a compiled server. */\n{threads}#define main porffor_application_main\n#include \"app.windows.c\"\n#undef main\nint main(int argc, char **argv) {{ setvbuf(stdout, NULL, _IONBF, 0); return porffor_application_main(argc, argv); }}\n"),
+            format!("/* Standalone Windows entry for a compiled program. */\n{threads}#define main porffor_application_main\n#include \"app.windows.c\"\n#undef main\nint main(int argc, char **argv) {{ setvbuf(stdout, NULL, _IONBF, 0); return porffor_application_main(argc, argv); }}\n"),
         )?;
         files.extend(["app.windows.c", "server.c"]);
         if options.threads {
@@ -567,6 +579,9 @@ fn node_link_args(options: &Options, source: &str) -> Result<(String, String)> {
         compile_flags.push_str(&format!(" -I{}", tool(options, &http2.join("include"))?));
         link_flags.push_str(&format!(" {}", tool(options, &archive)?));
     }
+    if source.contains("#include \"src/reactc-canvas.h\"") {
+        link_flags.push_str(" -lgdiplus -lgdi32 -luser32 -lole32");
+    }
     Ok((compile_flags, link_flags))
 }
 
@@ -581,6 +596,25 @@ fn append_http2_notice(options: &Options, source: &str, notices: &mut String) ->
     notices.push_str("\nnghttp2\n");
     notices.push_str(&std::fs::read_to_string(options.root.join("tools/http2-win/LICENSE.txt"))
         .context("missing the nghttp2 license; run `npm run setup`")?);
+    Ok(())
+}
+
+fn copy_angle(options: &Options, source: &str) -> Result<()> {
+    if !source.contains("reactc_canvas_gl_context(") {
+        return Ok(());
+    }
+    let tools = options.root.join("tools");
+    let angle = tools.join("angle-win/ucrt64");
+    for (from, names) in [
+        (angle.join("bin"), &["libEGL.dll", "libGLESv2.dll"][..]),
+        (tools.join("mingw64/bin"), &["libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll", "zlib1.dll"][..]),
+    ] {
+        for name in names {
+            std::fs::copy(from.join(name), options.outdir.join(name))
+                .with_context(|| format!("cannot package {name}; run npm run setup -- --native"))?;
+        }
+    }
+    std::fs::copy(angle.join("share/licenses/angleproject/LICENSE"), options.outdir.join("ANGLE-LICENSE.txt"))?;
     Ok(())
 }
 
@@ -707,7 +741,7 @@ fn windows_library_notices(options: &Options, source: &str, ada: bool) -> Result
     Ok(notices)
 }
 
-/// A standalone Windows console executable for a compiled server. Its
+/// A standalone Windows executable for a compiled server or canvas app. Its
 /// third-party notices are written next to it.
 fn link_windows_server(options: &Options) -> Result<PathBuf> {
     let out = &options.outdir;
@@ -721,11 +755,13 @@ fn link_windows_server(options: &Options) -> Result<PathBuf> {
     let cc = std::env::var("WINDOWS_CC").unwrap_or_else(|_| mingw(options, "gcc"));
     let executable = out.join(format!("{}.exe", options.name));
     let (thread_objects, thread_libraries) = thread_link_args(options, &format!("{ada_libraries} {node_libraries}"))?;
+    let subsystem = if options.console { "-mconsole" } else { "-mwindows" };
     run(options, &format!(
-        "{cc} -O2 -static -Wno-attributes -I{} {ada_include} {node_include} {} {thread_objects} {ada_libraries} {node_libraries} {thread_libraries} -lshell32 -ladvapi32 -lbcrypt -lm -o {}",
+        "{cc} -O2 {subsystem} -static -Wno-attributes -I{} {ada_include} {node_include} {} {thread_objects} {ada_libraries} {node_libraries} {thread_libraries} -lshell32 -ladvapi32 -lbcrypt -lm -o {}",
         tool(options, &options.root)?, tool(options, &out.join("server.c"))?, tool(options, &executable)?
     ))
     .context("could not link the Windows server executable")?;
+    copy_angle(options, &source)?;
     Ok(executable)
 }
 
@@ -804,6 +840,7 @@ fn link_windows(options: &Options) -> Result<PathBuf> {
         tool(options, &options.root)?, tool(options, &host)?, tool(options, &core_object)?, tool(options, &resources_object)?, tool(options, &executable)?
     ))
     .context("could not link the application with its Skia host")?;
+    copy_angle(options, &source)?;
     Ok(executable)
 }
 

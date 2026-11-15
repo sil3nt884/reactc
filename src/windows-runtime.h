@@ -99,6 +99,65 @@ static char *porf_win_path_utf8(const wchar_t *path) {
   return NULL;
 }
 
+/* The Node loader can need realpath without the async filesystem backend. */
+static wchar_t *porf_win_fs_path(const char *utf8) {
+  int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, NULL, 0);
+  if (!count) { errno = EINVAL; return NULL; }
+  wchar_t *path = malloc((size_t)count * sizeof(*path));
+  if (!path) { errno = ENOMEM; return NULL; }
+  if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, path, count)) return path;
+  free(path);
+  errno = EINVAL;
+  return NULL;
+}
+
+static int porf_win_fs_error(DWORD code) {
+  switch (code) {
+    case ERROR_FILE_NOT_FOUND: case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_DRIVE: return ENOENT;
+    case ERROR_DIRECTORY: return ENOTDIR;
+    case ERROR_FILE_EXISTS: case ERROR_ALREADY_EXISTS: return EEXIST;
+    case ERROR_ACCESS_DENIED: case ERROR_SHARING_VIOLATION: case ERROR_LOCK_VIOLATION: return EACCES;
+    case ERROR_DISK_FULL: case ERROR_HANDLE_DISK_FULL: return ENOSPC;
+    case ERROR_DIR_NOT_EMPTY: return ENOTEMPTY;
+    case ERROR_NOT_SAME_DEVICE: return EXDEV;
+    case ERROR_FILENAME_EXCED_RANGE: return ENAMETOOLONG;
+    case ERROR_INVALID_NAME: case ERROR_INVALID_PARAMETER: return EINVAL;
+    case ERROR_NOT_ENOUGH_MEMORY: case ERROR_OUTOFMEMORY: return ENOMEM;
+    default: return EIO;
+  }
+}
+
+static char *porf_win_fs_realpath(const wchar_t *path) {
+  HANDLE file = CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+  if (file == INVALID_HANDLE_VALUE) { errno = porf_win_fs_error(GetLastError()); return NULL; }
+  wchar_t resolved[32768];
+  DWORD capacity = sizeof(resolved) / sizeof(*resolved);
+  DWORD length = GetFinalPathNameByHandleW(file, resolved, capacity, FILE_NAME_NORMALIZED);
+  DWORD error = GetLastError();
+  CloseHandle(file);
+  if (!length || length >= capacity) {
+    errno = length ? ENAMETOOLONG : porf_win_fs_error(error);
+    return NULL;
+  }
+  const wchar_t *name = resolved;
+  if (!wcsncmp(resolved, L"\\\\?\\UNC\\", 8)) {
+    resolved[6] = L'\\';
+    name += 6;
+  } else if (!wcsncmp(resolved, L"\\\\?\\", 4) && resolved[5] == L':') {
+    name += 4;
+  }
+  return porf_win_path_utf8(name);
+}
+
+static char *porf_win_fs_realpath_utf8(const char *utf8) {
+  wchar_t *path = porf_win_fs_path(utf8);
+  if (!path) return NULL;
+  char *resolved = porf_win_fs_realpath(path);
+  free(path);
+  return resolved;
+}
+
 static char *porf_win_getcwd(void) {
   wchar_t *path = _wgetcwd(NULL, 0);
   if (!path) return NULL;

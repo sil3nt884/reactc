@@ -40,6 +40,7 @@ jobs:
             tools/ada-win
             tools/http2-win
             tools/skia-win
+            tools/angle-win
           key: windows-native-${{ runner.os }}-${{ hashFiles('scripts/setup-native.mjs', 'tools/install-*.sh') }}
       - run: npm run setup -- --native
       - run: cargo test --locked --manifest-path compiler/Cargo.toml

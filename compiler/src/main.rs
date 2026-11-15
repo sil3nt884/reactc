@@ -45,6 +45,7 @@ pub struct Options {
     pub react_compiler: bool,
     pub native: bool,
     pub emit_c: bool,
+    pub console: bool,
     pub async_page: bool,
     pub http_origin: Option<String>,
     pub target: Target,
@@ -77,6 +78,7 @@ const USAGE: &str = "usage: reactc build [<entry>] [options]
   --config FILE           read options from FILE (default: reactc.config.json in this folder, if present)
   --only server|client    with a configuration and no entry: build one side
   --server                build <entry> as a server
+  --no-console            build a standalone Windows entry without a console window
   --target windows|linux|wasm
                           windows: a Windows .exe (the default when reactc runs on Windows);
                           linux (or host): a Linux program; wasm: a WASI module
@@ -84,7 +86,7 @@ const USAGE: &str = "usage: reactc build [<entry>] [options]
   --async-page  --react-compiler  --native  --emit-c
 
 Every option is also a reactc.config.json key (target, outDir, root, name, title, httpOrigin,
-asyncPage, reactCompiler, native, emitC). Command-line flags override the file.
+asyncPage, reactCompiler, native, emitC, console). Command-line flags override the file.
 
 A project with a reactc.config.json needs no build scripts: `reactc build` installs its npm
 dependencies on the first run and writes each target to its own folder (<outDir>/windows,
@@ -212,6 +214,7 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
         react_compiler: settings.react_compiler.unwrap_or(false),
         native: native && !emit_only,
         emit_c: native || emit_only,
+        console: settings.console.unwrap_or(true),
         // Forms and HTTP need async page mode; configured clients default to it.
         async_page: !server && (http_origin.is_some() || settings.async_page.unwrap_or(configured) || next_app),
         http_origin,
@@ -251,6 +254,8 @@ fn parse_args() -> Result<(Vec<Options>, Option<PathBuf>)> {
             "--react-compiler" => cli.react_compiler = Some(true),
             "--native" => cli.native = Some(true),
             "--emit-c" => cli.emit_c = Some(true),
+            "--no-console" => cli.console = Some(false),
+            "--console" => cli.console = Some(true),
             "--server" => cli.server = Some(true),
             "--async-page" => cli.async_page = Some(true),
             "--http-origin" => cli.http_origin = Some(value(&mut args, "--http-origin")?),

@@ -1,0 +1,12 @@
+{
+  "name": "reactc-pixi-probe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node canvas.mjs"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "1.1.1",
+    "pixi.js": "8.22.0"
+  }
+}
