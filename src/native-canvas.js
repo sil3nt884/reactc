@@ -34,9 +34,9 @@ function path(id, operation, a = 0, b = 0, c = 0, d = 0, e = 0, f = 0) {
   check(result);
 }
 
-function draw(id, operation, color = 0, x = 0, y = 0, width = 0, height = 0) {
+function draw(id, operation, color = 0, x = 0, y = 0, width = 0, height = 0, gradient = 0) {
   let result = 0;
-  Porffor.c`result = (f64)reactc_canvas_draw(REACTC_CANVAS_NUM(id), REACTC_CANVAS_NUM(operation), REACTC_CANVAS_NUM(color), REACTC_CANVAS_NUM(x), REACTC_CANVAS_NUM(y), REACTC_CANVAS_NUM(width), REACTC_CANVAS_NUM(height));`;
+  Porffor.c`result = (f64)reactc_canvas_draw(REACTC_CANVAS_NUM(id), REACTC_CANVAS_NUM(operation), REACTC_CANVAS_NUM(color), REACTC_CANVAS_NUM(x), REACTC_CANVAS_NUM(y), REACTC_CANVAS_NUM(width), REACTC_CANVAS_NUM(height), REACTC_CANVAS_NUM(gradient));`;
   check(result);
 }
 
@@ -46,10 +46,10 @@ function composite(id, copy) {
   check(result);
 }
 
-function pixel(id, x, y) {
+function readCanvasPixels(id, x, y, width, height) {
   let result = 0;
-  Porffor.c`result = (f64)reactc_canvas_pixel(REACTC_CANVAS_NUM(id), REACTC_CANVAS_NUM(x), REACTC_CANVAS_NUM(y));`;
-  return result;
+  Porffor.c`result = (f64)reactc_canvas_read_rgba(REACTC_CANVAS_NUM(id), REACTC_CANVAS_NUM(x), REACTC_CANVAS_NUM(y), REACTC_CANVAS_NUM(width), REACTC_CANVAS_NUM(height));`;
+  check(result);
 }
 
 function openWindow(id) {
@@ -134,9 +134,9 @@ function glRead(id, x, y, width, height) {
   check(result);
 }
 
-function glReadByte(id, position) {
+function readPixelByte(id, position) {
   let result = 0;
-  Porffor.c`result = (f64)reactc_canvas_gl_read_byte(REACTC_CANVAS_NUM(id), REACTC_CANVAS_NUM(position));`;
+  Porffor.c`result = (f64)reactc_canvas_read_byte(REACTC_CANVAS_NUM(id), REACTC_CANVAS_NUM(position));`;
   return result;
 }
 
@@ -287,6 +287,45 @@ function paintColor(style, alpha) {
   return Math.round(alpha * opacity) * 0x1000000 + Number.parseInt(style.slice(1, 7), 16);
 }
 
+function defineGradient(radial, startX, startY, startRadius, endX, endY, endRadius, count) {
+  let result = 0;
+  Porffor.c`result = (f64)reactc_canvas_gradient(REACTC_CANVAS_NUM(radial), REACTC_CANVAS_NUM(startX), REACTC_CANVAS_NUM(startY), REACTC_CANVAS_NUM(startRadius), REACTC_CANVAS_NUM(endX), REACTC_CANVAS_NUM(endY), REACTC_CANVAS_NUM(endRadius), REACTC_CANVAS_NUM(count));`;
+  check(result);
+}
+
+function gradientStop(slot, offset, color) {
+  Porffor.c`reactc_canvas_gradient_stop(REACTC_CANVAS_NUM(slot), REACTC_CANVAS_NUM(offset), REACTC_CANVAS_NUM(color));`;
+}
+
+export class CanvasGradient {
+  constructor(radial, x0, y0, r0, x1, y1, r1) {
+    if (![x0, y0, r0, x1, y1, r1].every(Number.isFinite)) {
+      throw new TypeError('Canvas gradient coordinates must be finite');
+    }
+    if (r0 < 0 || r1 < 0) throw new RangeError('Canvas gradient radii must be nonnegative');
+    this.radial = radial;
+    this.coordinates = [x0, y0, r0, x1, y1, r1];
+    this.stops = [];
+  }
+
+  addColorStop(offset, color) {
+    offset = Number(offset);
+    if (!(offset >= 0 && offset <= 1)) throw new RangeError('Canvas gradient offset must be between 0 and 1');
+    this.stops.push({ offset, color: paintColor(color, 1) });
+    this.stops.sort((a, b) => a.offset - b.offset);
+  }
+}
+
+function stageGradient(gradient, alpha) {
+  const [x0, y0, r0, x1, y1, r1] = gradient.coordinates;
+  defineGradient(gradient.radial, x0, y0, r0, x1, y1, r1, gradient.stops.length);
+  for (let slot = 0; slot < gradient.stops.length; slot++) {
+    const stop = gradient.stops[slot];
+    const opacity = Math.round((stop.color >>> 24) * alpha);
+    gradientStop(slot, stop.offset, opacity * 0x1000000 + (stop.color & 0xffffff));
+  }
+}
+
 const defaultFont = { source: '10px sans-serif', size: 10, style: 0, families: ['sans-serif'] };
 const baselines = ['alphabetic', 'top', 'hanging', 'middle', 'ideographic', 'bottom'];
 const textAlignments = ['left', 'center', 'right', 'start', 'end'];
@@ -306,18 +345,18 @@ function parseFont(source) {
   return { source, size, style: (italic ? 2 : 0) | (bold ? 1 : 0), families };
 }
 
-function canvasText(id, text, font, baseline, align, operation, x, y, maxWidth, color, lineWidth) {
+function canvasText(id, text, font, baseline, align, operation, x, y, maxWidth, color, lineWidth, gradient) {
   const families = font.families.filter(name => name.length).join('\0') + '\0\0';
   const staged = families + text;
   if (staged.length > 32768) throw new RangeError('Native canvas text is too long');
   for (let position = 0; position < staged.length; position++) filenameUnit(position, staged.charCodeAt(position));
   commitText(id, families.length, text.length, font.size, font.style, baseline, align,
-    operation, x, y, maxWidth, color, lineWidth);
+    operation, x, y, maxWidth, color, lineWidth, gradient);
 }
 
-function commitText(id, offset, length, size, style, baseline, align, operation, x, y, maxWidth, color, lineWidth) {
+function commitText(id, offset, length, size, style, baseline, align, operation, x, y, maxWidth, color, lineWidth, gradient) {
   let result = 0;
-  Porffor.c`result = (f64)reactc_canvas_text(REACTC_CANVAS_NUM(id), REACTC_CANVAS_NUM(offset), REACTC_CANVAS_NUM(length), REACTC_CANVAS_NUM(size), REACTC_CANVAS_NUM(style), REACTC_CANVAS_NUM(baseline), REACTC_CANVAS_NUM(align), REACTC_CANVAS_NUM(operation), REACTC_CANVAS_NUM(x), REACTC_CANVAS_NUM(y), REACTC_CANVAS_NUM(maxWidth), REACTC_CANVAS_NUM(color), REACTC_CANVAS_NUM(lineWidth));`;
+  Porffor.c`result = (f64)reactc_canvas_text(REACTC_CANVAS_NUM(id), REACTC_CANVAS_NUM(offset), REACTC_CANVAS_NUM(length), REACTC_CANVAS_NUM(size), REACTC_CANVAS_NUM(style), REACTC_CANVAS_NUM(baseline), REACTC_CANVAS_NUM(align), REACTC_CANVAS_NUM(operation), REACTC_CANVAS_NUM(x), REACTC_CANVAS_NUM(y), REACTC_CANVAS_NUM(maxWidth), REACTC_CANVAS_NUM(color), REACTC_CANVAS_NUM(lineWidth), REACTC_CANVAS_NUM(gradient));`;
   check(result);
 }
 
@@ -347,9 +386,9 @@ export class CanvasRenderingContext2D {
   }
 
   get fillStyle() { return this.state.fillStyle; }
-  set fillStyle(value) { paintColor(value, 1); this.state.fillStyle = value; }
+  set fillStyle(value) { if (!(value instanceof CanvasGradient)) paintColor(value, 1); this.state.fillStyle = value; }
   get strokeStyle() { return this.state.strokeStyle; }
-  set strokeStyle(value) { paintColor(value, 1); this.state.strokeStyle = value; }
+  set strokeStyle(value) { if (!(value instanceof CanvasGradient)) paintColor(value, 1); this.state.strokeStyle = value; }
   get globalAlpha() { return this.state.globalAlpha; }
   set globalAlpha(value) {
     if (Number.isFinite(value) && value >= 0 && value <= 1) this.state.globalAlpha = value;
@@ -382,10 +421,13 @@ export class CanvasRenderingContext2D {
   get textAlign() { return this.state.textAlign; }
   set textAlign(value) { if (textAlignments.includes(value)) this.state.textAlign = value; }
 
-  renderText(operation, text, x, y, maxWidth, color) {
+  renderText(operation, text, x, y, maxWidth, style) {
+    const gradient = style instanceof CanvasGradient;
+    if (gradient) stageGradient(style, this.globalAlpha);
+    const color = operation && !gradient ? paintColor(style, this.globalAlpha) : 0;
     const align = this.textAlign === 'center' ? 1 : (this.textAlign === 'right' || this.textAlign === 'end' ? 2 : 0);
     canvasText(this.canvas.handle(), String(text), this.state.font, baselines.indexOf(this.textBaseline),
-      align, operation, x, y, maxWidth, color, this.lineWidth);
+      align, operation, x, y, maxWidth, color, this.lineWidth, gradient ? 1 : 0);
   }
   measureText(text) {
     this.renderText(0, text, 0, 0, 0, 0);
@@ -398,12 +440,12 @@ export class CanvasRenderingContext2D {
   fillText(text, x, y, maxWidth) {
     if (!Number.isFinite(x) || !Number.isFinite(y) ||
         (maxWidth !== undefined && (!Number.isFinite(maxWidth) || maxWidth <= 0))) return;
-    this.renderText(1, text, x, y, maxWidth ?? 0, paintColor(this.fillStyle, this.globalAlpha));
+    this.renderText(1, text, x, y, maxWidth ?? 0, this.fillStyle);
   }
   strokeText(text, x, y, maxWidth) {
     if (!Number.isFinite(x) || !Number.isFinite(y) ||
         (maxWidth !== undefined && (!Number.isFinite(maxWidth) || maxWidth <= 0))) return;
-    this.renderText(2, text, x, y, maxWidth ?? 0, paintColor(this.strokeStyle, this.globalAlpha));
+    this.renderText(2, text, x, y, maxWidth ?? 0, this.strokeStyle);
   }
 
   save() {
@@ -434,15 +476,26 @@ export class CanvasRenderingContext2D {
   bezierCurveTo(x1, y1, x2, y2, x, y) { path(this.canvas.handle(), 5, x1, y1, x2, y2, x, y); }
   quadraticCurveTo(x1, y1, x, y) { path(this.canvas.handle(), 6, x1, y1, x, y); }
   clearRect(x, y, width, height) { draw(this.canvas.handle(), 0, 0, x, y, width, height); }
+  createLinearGradient(x0, y0, x1, y1) {
+    return new CanvasGradient(0, x0, y0, 0, x1, y1, 0);
+  }
+  createRadialGradient(x0, y0, r0, x1, y1, r1) {
+    return new CanvasGradient(1, x0, y0, r0, x1, y1, r1);
+  }
+  paint(operation, style, x = 0, y = 0, width = 0, height = 0) {
+    const gradient = style instanceof CanvasGradient;
+    if (gradient) stageGradient(style, this.globalAlpha);
+    const color = gradient ? 0 : paintColor(style, this.globalAlpha);
+    draw(this.canvas.handle(), operation, color, x, y, width, height, gradient ? 1 : 0);
+  }
   fillRect(x, y, width, height) {
-    draw(this.canvas.handle(), 1, paintColor(this.fillStyle, this.globalAlpha), x, y, width, height);
+    this.paint(1, this.fillStyle, x, y, width, height);
   }
   fill(rule = 'nonzero') {
-    draw(this.canvas.handle(), rule === 'evenodd' ? 3 : 2, paintColor(this.fillStyle, this.globalAlpha));
+    this.paint(rule === 'evenodd' ? 3 : 2, this.fillStyle);
   }
   stroke() {
-    draw(this.canvas.handle(), 4, paintColor(this.strokeStyle, this.globalAlpha),
-      caps.indexOf(this.lineCap), joins.indexOf(this.lineJoin), this.lineWidth, this.miterLimit);
+    this.paint(4, this.strokeStyle, caps.indexOf(this.lineCap), joins.indexOf(this.lineJoin), this.lineWidth, this.miterLimit);
   }
   clip(rule = 'nonzero') { draw(this.canvas.handle(), rule === 'evenodd' ? 6 : 5); }
   drawImage(source, ...args) {
@@ -463,16 +516,9 @@ export class CanvasRenderingContext2D {
     x = Math.trunc(x);
     y = Math.trunc(y);
     const data = new Uint8ClampedArray(width * height * 4);
-    for (let row = 0; row < height; row++) {
-      for (let column = 0; column < width; column++) {
-        const rgba = pixel(id, x + column, y + row);
-        const at = (row * width + column) * 4;
-        data[at] = (rgba >>> 16) & 255;
-        data[at + 1] = (rgba >>> 8) & 255;
-        data[at + 2] = rgba & 255;
-        data[at + 3] = rgba >>> 24;
-      }
-    }
+    prepareUpload(id, data.length);
+    readCanvasPixels(id, x, y, width, height);
+    for (let offset = 0; offset < data.length; offset++) data[offset] = readPixelByte(id, offset);
     return { data, width, height };
   }
 }
@@ -941,7 +987,7 @@ class NativeWebGLContext {
     prepareUpload(id, length);
     glRead(id, x, y, width, height);
     for (let position = 0; position < length; position++) {
-      pixels[offset + position] = glReadByte(id, position);
+      pixels[offset + position] = readPixelByte(id, position);
     }
   }
 }
@@ -1124,18 +1170,27 @@ export class OffscreenCanvas extends CanvasEventTarget {
       this.windowWidth = this.windowHeight = null;
       event = { type: 'close' };
     } else {
-      const types = ['pointermove', 'pointerdown', 'pointerup', 'pointerleave'];
+      const types = ['pointermove', 'pointerdown', 'pointerup', 'pointerleave', 'pointerover', 'wheel', 'wheel'];
       const keys = eventField(id, 2);
+      const detail = eventField(id, 3);
       const x = eventField(id, 0);
       const y = eventField(id, 1);
+      const buttons = (keys & 3) | ((keys & 16) >> 2);
       event = {
         type: types[kind - 3], x, y, clientX: x, clientY: y, offsetX: x, offsetY: y,
-        button: kind === 4 || kind === 5 ? 0 : -1,
-        buttons: keys & 1, shiftKey: !!(keys & 4), ctrlKey: !!(keys & 8),
+        pageX: x, pageY: y,
+        button: kind === 4 || kind === 5 ? detail : -1,
+        buttons, shiftKey: !!(keys & 4), ctrlKey: !!(keys & 8),
         altKey: false, metaKey: false, pointerType: 'mouse', pointerId: 1, isPrimary: true,
-        pressure: keys & 1 ? 0.5 : 0, width: 1, height: 1, tiltX: 0, tiltY: 0,
+        pressure: buttons ? 0.5 : 0, width: 1, height: 1, tiltX: 0, tiltY: 0,
         twist: 0, tangentialPressure: 0,
       };
+      if (kind === 8 || kind === 9) {
+        event.deltaX = kind === 9 ? detail : 0;
+        event.deltaY = kind === 8 ? detail : 0;
+        event.deltaZ = 0;
+        event.deltaMode = 0;
+      }
     }
     event.target = this;
     event.cancelable = false;
@@ -1155,7 +1210,7 @@ export class OffscreenCanvas extends CanvasEventTarget {
 
 // Install the browser APIs used by renderers that accept an offscreen canvas.
 // Call dispose after destroying the renderer, so it can remove its listeners.
-export function installCanvasEnvironment({ baseUrl, resolveImagePath = source => source, readFile } = {}) {
+export function installCanvasEnvironment({ baseUrl, resolveImagePath = source => source, readFile, pixi } = {}) {
   const windowEvents = new CanvasEventTarget();
   const documentEvents = new CanvasEventTarget();
   const canvases = [];
@@ -1233,17 +1288,30 @@ export function installCanvasEnvironment({ baseUrl, resolveImagePath = source =>
     globalThis[name] = bindings[name];
   }
 
+  const adapter = {
+    createCanvas,
+    createImage,
+    getCanvasRenderingContext2D: () => CanvasRenderingContext2D,
+    getWebGLRenderingContext: () => WebGLRenderingContext,
+    getNavigator: () => ({ userAgent: 'ReactC' }),
+    getBaseUrl: () => baseUrl ?? 'file:///',
+    getFontFaceSet: () => null,
+    fetch: fetchResource,
+  };
+  const previousAdapter = pixi?.DOMAdapter.get();
+  const nativeEnvironment = pixi && {
+    extension: { type: pixi.ExtensionType.Environment, name: 'reactc', priority: 1 },
+    test: () => pixi.DOMAdapter.get() === adapter,
+    // Native apps register their render systems through Pixi's feature imports.
+    load() {},
+  };
+  if (pixi) {
+    pixi.extensions.add(nativeEnvironment);
+    pixi.DOMAdapter.set(adapter);
+  }
+
   return {
-    adapter: {
-      createCanvas,
-      createImage,
-      getCanvasRenderingContext2D: () => CanvasRenderingContext2D,
-      getWebGLRenderingContext: () => WebGLRenderingContext,
-      getNavigator: () => ({ userAgent: 'ReactC' }),
-      getBaseUrl: () => baseUrl ?? 'file:///',
-      getFontFaceSet: () => null,
-      fetch: fetchResource,
-    },
+    adapter,
     pollEvent(canvas) {
       const event = canvas.pollEvent();
       if (!event) return null;
@@ -1254,6 +1322,10 @@ export function installCanvasEnvironment({ baseUrl, resolveImagePath = source =>
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (pixi) {
+        pixi.extensions.remove(nativeEnvironment);
+        if (pixi.DOMAdapter.get() === adapter) pixi.DOMAdapter.set(previousAdapter);
+      }
       for (const frame of frames) clearTimeout(frame.id);
       for (const canvas of canvases) canvas.dispose();
       documentEvents.eventListeners.clear();

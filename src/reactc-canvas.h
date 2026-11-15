@@ -15,10 +15,11 @@ static inline double reactc_canvas_double(double value) { return value; }
 enum { REACTC_CANVAS_LIMIT = 64, REACTC_CANVAS_STACK = 64, REACTC_CANVAS_EVENTS = 128 };
 enum {
     REACTC_CANVAS_RESIZED = 1, REACTC_CANVAS_CLOSED, REACTC_CANVAS_MOVE,
-    REACTC_CANVAS_DOWN, REACTC_CANVAS_UP, REACTC_CANVAS_LEAVE
+    REACTC_CANVAS_DOWN, REACTC_CANVAS_UP, REACTC_CANVAS_LEAVE,
+    REACTC_CANVAS_OVER, REACTC_CANVAS_WHEEL, REACTC_CANVAS_HWHEEL
 };
 typedef struct {
-    int kind, x, y, buttons;
+    int kind, x, y, keys, detail;
 } ReactcCanvasEvent;
 
 typedef struct {
@@ -84,13 +85,13 @@ static ReactcCanvas *reactc_canvas_at(int id) {
     return id > 0 && id <= REACTC_CANVAS_LIMIT ? reactc_canvases[id - 1] : NULL;
 }
 
-static void reactc_canvas_enqueue(ReactcCanvas *canvas, int kind, int x, int y, int buttons) {
+static void reactc_canvas_enqueue(ReactcCanvas *canvas, ReactcCanvasEvent event) {
     unsigned tail = (canvas->event_head + canvas->event_count) % REACTC_CANVAS_EVENTS;
     if (canvas->event_count) {
         unsigned previous = (tail + REACTC_CANVAS_EVENTS - 1) % REACTC_CANVAS_EVENTS;
-        if ((kind == REACTC_CANVAS_MOVE || kind == REACTC_CANVAS_RESIZED) &&
-            canvas->events[previous].kind == kind) {
-            canvas->events[previous] = (ReactcCanvasEvent){kind, x, y, buttons};
+        if ((event.kind == REACTC_CANVAS_MOVE || event.kind == REACTC_CANVAS_RESIZED) &&
+            canvas->events[previous].kind == event.kind) {
+            canvas->events[previous] = event;
             return;
         }
     }
@@ -98,7 +99,7 @@ static void reactc_canvas_enqueue(ReactcCanvas *canvas, int kind, int x, int y, 
         canvas->event_head = (canvas->event_head + 1) % REACTC_CANVAS_EVENTS;
         --canvas->event_count;
     }
-    canvas->events[tail] = (ReactcCanvasEvent){kind, x, y, buttons};
+    canvas->events[tail] = event;
     ++canvas->event_count;
 }
 
@@ -115,31 +116,57 @@ static LRESULT CALLBACK reactc_canvas_window_proc(HWND window, UINT message, WPA
         return 0;
     case WM_DESTROY:
         canvas->window = NULL;
-        reactc_canvas_enqueue(canvas, REACTC_CANVAS_CLOSED, 0, 0, 0);
+        reactc_canvas_enqueue(canvas, (ReactcCanvasEvent){.kind = REACTC_CANVAS_CLOSED});
         return 0;
     case WM_SIZE:
         if (keys != SIZE_MINIMIZED && LOWORD(data) && HIWORD(data))
-            reactc_canvas_enqueue(canvas, REACTC_CANVAS_RESIZED, LOWORD(data), HIWORD(data), 0);
+            reactc_canvas_enqueue(canvas, (ReactcCanvasEvent){REACTC_CANVAS_RESIZED, LOWORD(data), HIWORD(data)});
         return 0;
-    case WM_MOUSEMOVE:
+    case WM_MOUSEMOVE: {
+        ReactcCanvasEvent event = {REACTC_CANVAS_MOVE, (short)LOWORD(data), (short)HIWORD(data), (int)keys, -1};
         if (!canvas->tracking) {
             TRACKMOUSEEVENT tracking = { sizeof(tracking), TME_LEAVE, window, 0 };
             canvas->tracking = TrackMouseEvent(&tracking);
+            if (canvas->tracking) {
+                event.kind = REACTC_CANVAS_OVER;
+                reactc_canvas_enqueue(canvas, event);
+                event.kind = REACTC_CANVAS_MOVE;
+            }
         }
-        reactc_canvas_enqueue(canvas, REACTC_CANVAS_MOVE, (short)LOWORD(data), (short)HIWORD(data), (int)keys);
+        reactc_canvas_enqueue(canvas, event);
         return 0;
-    case WM_LBUTTONDOWN:
-        SetCapture(window);
-        reactc_canvas_enqueue(canvas, REACTC_CANVAS_DOWN, (short)LOWORD(data), (short)HIWORD(data), (int)keys);
+    }
+    case WM_LBUTTONDOWN: case WM_MBUTTONDOWN: case WM_RBUTTONDOWN:
+    case WM_LBUTTONUP: case WM_MBUTTONUP: case WM_RBUTTONUP: {
+        const int down = message == WM_LBUTTONDOWN || message == WM_MBUTTONDOWN || message == WM_RBUTTONDOWN;
+        const int button = message == WM_MBUTTONDOWN || message == WM_MBUTTONUP ? 1 :
+            (message == WM_RBUTTONDOWN || message == WM_RBUTTONUP ? 2 : 0);
+        if (down) SetCapture(window);
+        else if (!(keys & (MK_LBUTTON | MK_MBUTTON | MK_RBUTTON)) && GetCapture() == window) ReleaseCapture();
+        reactc_canvas_enqueue(canvas, (ReactcCanvasEvent){
+            down ? REACTC_CANVAS_DOWN : REACTC_CANVAS_UP, (short)LOWORD(data), (short)HIWORD(data), (int)keys, button
+        });
         return 0;
-    case WM_LBUTTONUP:
-        if (GetCapture() == window) ReleaseCapture();
-        reactc_canvas_enqueue(canvas, REACTC_CANVAS_UP, (short)LOWORD(data), (short)HIWORD(data), (int)keys);
+    }
+    case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: {
+        POINT point = {(short)LOWORD(data), (short)HIWORD(data)};
+        if (ScreenToClient(window, &point)) {
+            const int horizontal = message == WM_MOUSEHWHEEL;
+            const int delta = (short)HIWORD(keys);
+            reactc_canvas_enqueue(canvas, (ReactcCanvasEvent){
+                horizontal ? REACTC_CANVAS_HWHEEL : REACTC_CANVAS_WHEEL,
+                point.x, point.y, LOWORD(keys), horizontal ? delta : -delta
+            });
+        }
         return 0;
-    case WM_MOUSELEAVE:
+    }
+    case WM_MOUSELEAVE: {
         canvas->tracking = 0;
-        reactc_canvas_enqueue(canvas, REACTC_CANVAS_LEAVE, 0, 0, 0);
+        POINT point = {0};
+        if (GetCursorPos(&point)) ScreenToClient(window, &point);
+        reactc_canvas_enqueue(canvas, (ReactcCanvasEvent){REACTC_CANVAS_LEAVE, point.x, point.y, 0, -1});
         return 0;
+    }
     case WM_PAINT: {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(window, &paint);
@@ -210,7 +237,8 @@ static int reactc_canvas_event_field(int id, int field) {
     if (!canvas) return 0;
     if (field == 0) return canvas->current_event.x;
     if (field == 1) return canvas->current_event.y;
-    return canvas->current_event.buttons;
+    if (field == 2) return canvas->current_event.keys;
+    return canvas->current_event.detail;
 }
 
 static int reactc_canvas_resize(int id, int width, int height) {
@@ -348,36 +376,40 @@ static int reactc_canvas_path(int id, int operation, REAL a, REAL b, REAL c, REA
     }
 }
 
-static int reactc_canvas_draw(int id, int operation, ARGB color, REAL x, REAL y, REAL width, REAL height) {
+#include "reactc-canvas-gradient.h"
+
+static int reactc_canvas_draw(int id, int operation, ARGB color, REAL x, REAL y, REAL width, REAL height,
+    int use_gradient) {
     ReactcCanvas *canvas = reactc_canvas_at(id);
     if (!canvas) return 0;
     GpGraphics *graphics = canvas->graphics;
-    GpStatus status;
     if (operation == 2 || operation == 3) {
         GdipSetPathFillMode(canvas->path, operation == 3 ? FillModeAlternate : FillModeWinding);
-    }
-    if (operation == 4) {
-        if (x < 0 || x > 2 || y < 0 || y > 2) return 0;
-        GpPen *pen = NULL;
-        if (GdipCreatePen1(color, width, UnitWorld, &pen) != Ok) return 0;
-        const GpLineCap caps[] = { LineCapFlat, LineCapRound, LineCapSquare };
-        const GpLineJoin joins[] = { LineJoinMiter, LineJoinRound, LineJoinBevel };
-        GdipSetPenStartCap(pen, caps[(int)x]);
-        GdipSetPenEndCap(pen, caps[(int)x]);
-        GdipSetPenLineJoin(pen, joins[(int)y]);
-        if (height > 0) GdipSetPenMiterLimit(pen, height);
-        status = GdipDrawPath(graphics, pen, canvas->path);
-        GdipDeletePen(pen);
-        return status == Ok;
     }
     if (operation == 5 || operation == 6) {
         GdipSetPathFillMode(canvas->path, operation == 6 ? FillModeAlternate : FillModeWinding);
         return GdipSetClipPath(graphics, canvas->path, CombineModeIntersect) == Ok;
     }
-    GpSolidFill *brush = NULL;
-    if (GdipCreateSolidFill(color, &brush) != Ok) return 0;
-    if (operation <= 1) {
-        if (width == 0 || height == 0) { GdipDeleteBrush(brush); return 1; }
+    if (operation <= 1 && (width == 0 || height == 0)) return 1;
+    if (operation == 4 && (x < 0 || x > 2 || y < 0 || y > 2)) return 0;
+
+    ReactcCanvasPaint paint = {0};
+    int ready = reactc_canvas_paint(canvas, &paint, color, use_gradient);
+    GpStatus status = ready ? Ok : GenericError;
+    if (ready == 1 && operation == 4) {
+        GpPen *pen = NULL;
+        status = GdipCreatePen2(paint.brush, width, UnitWorld, &pen);
+        if (status == Ok) {
+            const GpLineCap caps[] = { LineCapFlat, LineCapRound, LineCapSquare };
+            const GpLineJoin joins[] = { LineJoinMiter, LineJoinRound, LineJoinBevel };
+            GdipSetPenStartCap(pen, caps[(int)x]);
+            GdipSetPenEndCap(pen, caps[(int)x]);
+            GdipSetPenLineJoin(pen, joins[(int)y]);
+            if (height > 0) GdipSetPenMiterLimit(pen, height);
+            status = GdipDrawPath(graphics, pen, canvas->path);
+            GdipDeletePen(pen);
+        }
+    } else if (ready == 1 && operation <= 1) {
         if (width < 0) { x += width; width = -width; }
         if (height < 0) { y += height; height = -height; }
         CompositingMode previous;
@@ -385,12 +417,12 @@ static int reactc_canvas_draw(int id, int operation, ARGB color, REAL x, REAL y,
             GdipGetCompositingMode(graphics, &previous);
             GdipSetCompositingMode(graphics, CompositingModeSourceCopy);
         }
-        status = GdipFillRectangle(graphics, (GpBrush *)brush, x, y, width, height);
+        status = GdipFillRectangle(graphics, paint.brush, x, y, width, height);
         if (operation == 0) GdipSetCompositingMode(graphics, previous);
-    } else {
-        status = GdipFillPath(graphics, (GpBrush *)brush, canvas->path);
+    } else if (ready == 1) {
+        status = GdipFillPath(graphics, paint.brush, canvas->path);
     }
-    GdipDeleteBrush(brush);
+    reactc_canvas_paint_destroy(&paint);
     return status == Ok;
 }
 
@@ -400,14 +432,31 @@ static int reactc_canvas_composite(int id, int copy) {
         copy ? CompositingModeSourceCopy : CompositingModeSourceOver) == Ok;
 }
 
-static uint32_t reactc_canvas_pixel(int id, int x, int y) {
+static int reactc_canvas_read_rgba(int id, int x, int y, int width, int height) {
     ReactcCanvas *canvas = reactc_canvas_at(id);
-    ARGB pixel = 0;
-    if (canvas && x >= 0 && y >= 0 && x < canvas->width && y < canvas->height) {
-        GdipFlush(canvas->graphics, FlushIntentionSync);
-        GdipBitmapGetPixel(canvas->bitmap, x, y, &pixel);
+    if (!canvas || width < 1 || height < 1 || width > 4096 || height > 4096 ||
+        (size_t)width * height * 4 > canvas->upload_size) return 0;
+    if (x >= canvas->width || y >= canvas->height || x <= -width || y <= -height) return 1;
+    const int left = x < 0 ? 0 : x, top = y < 0 ? 0 : y;
+    const int right = x + width < canvas->width ? x + width : canvas->width;
+    const int bottom = y + height < canvas->height ? y + height : canvas->height;
+    GpRect rect = {left, top, right - left, bottom - top};
+    BitmapData bits = {0};
+    if (GdipFlush(canvas->graphics, FlushIntentionSync) != Ok ||
+        GdipBitmapLockBits(canvas->bitmap, &rect, ImageLockModeRead, PixelFormat32bppARGB, &bits) != Ok) return 0;
+    for (int row = 0; row < rect.Height; row++) {
+        const unsigned char *source = (const unsigned char *)bits.Scan0 + (ptrdiff_t)row * bits.Stride;
+        unsigned char *destination = canvas->upload + ((size_t)(top - y + row) * width + left - x) * 4;
+        for (int column = 0; column < rect.Width; column++) {
+            destination[0] = source[2];
+            destination[1] = source[1];
+            destination[2] = source[0];
+            destination[3] = source[3];
+            source += 4;
+            destination += 4;
+        }
     }
-    return pixel;
+    return GdipBitmapUnlockBits(canvas->bitmap, &bits) == Ok;
 }
 
 static int reactc_canvas_image(int id, int source, REAL sx, REAL sy, REAL sw, REAL sh,
@@ -519,7 +568,7 @@ static GpFontFamily *reactc_canvas_font_family(int text_offset) {
 
 static int reactc_canvas_text(int id, int text_offset, int length, REAL size,
     int style, int baseline, int align, int operation, REAL x, REAL y,
-    REAL max_width, ARGB color, REAL line_width) {
+    REAL max_width, ARGB color, REAL line_width, int use_gradient) {
     ReactcCanvas *canvas = reactc_canvas_at(id);
     if (!canvas || text_offset < 1 || text_offset >= 32768 ||
         length < 0 || length > 32768 - text_offset || !(size > 0 && size <= 4096)) return 0;
@@ -535,7 +584,7 @@ static int reactc_canvas_text(int id, int text_offset, int length, REAL size,
     GpStringFormat *format = NULL;
     GpPath *glyphs = NULL;
     GpMatrix *transform = NULL;
-    GpSolidFill *brush = NULL;
+    ReactcCanvasPaint paint = {0};
     GpPen *pen = NULL;
     UINT16 em = 0, ascent = 0, descent = 0;
     GpRectF layout = { 0, 0, 1000000, 1000000 }, advance = {0}, bounds = {0};
@@ -571,18 +620,18 @@ static int reactc_canvas_text(int id, int text_offset, int length, REAL size,
         if (GdipCreateMatrix2(ratio, 0, 0, 1,
                 x - aligned_x * ratio, y - origin_y, &transform) != Ok ||
             GdipTransformPath(glyphs, transform) != Ok) goto done;
-        if (operation == 1) {
-            if (GdipCreateSolidFill(color, &brush) != Ok ||
-                GdipFillPath(canvas->graphics, (GpBrush *)brush, glyphs) != Ok) goto done;
-        } else {
-            if (GdipCreatePen1(color, line_width, UnitWorld, &pen) != Ok ||
-                GdipDrawPath(canvas->graphics, pen, glyphs) != Ok) goto done;
-        }
+        const int ready = reactc_canvas_paint(canvas, &paint, color, use_gradient);
+        if (!ready) goto done;
+        if (ready == 1 && operation == 1 &&
+            GdipFillPath(canvas->graphics, paint.brush, glyphs) != Ok) goto done;
+        if (ready == 1 && operation == 2 &&
+            (GdipCreatePen2(paint.brush, line_width, UnitWorld, &pen) != Ok ||
+             GdipDrawPath(canvas->graphics, pen, glyphs) != Ok)) goto done;
     }
     result = 1;
 done:
     if (pen) GdipDeletePen(pen);
-    if (brush) GdipDeleteBrush(brush);
+    reactc_canvas_paint_destroy(&paint);
     if (transform) GdipDeleteMatrix(transform);
     if (glyphs) GdipDeletePath(glyphs);
     if (format) GdipDeleteStringFormat(format);
@@ -823,7 +872,7 @@ static int reactc_canvas_gl_read(int id, int x, int y, int width, int height) {
     return 1;
 }
 
-static unsigned int reactc_canvas_gl_read_byte(int id, unsigned int position) {
+static unsigned int reactc_canvas_read_byte(int id, unsigned int position) {
     ReactcCanvas *canvas = reactc_canvas_at(id);
     return canvas && position < canvas->upload_size ? canvas->upload[position] : 0;
 }

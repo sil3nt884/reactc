@@ -19,6 +19,13 @@ public static class PixiWindowProbe {
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PostMessage(IntPtr window, uint message, UIntPtr keys, IntPtr point);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Point { public int X; public int Y; }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ClientToScreen(IntPtr window, ref Point point);
 }
 '@
 
@@ -43,8 +50,20 @@ try {
                 }
                 $point = [IntPtr]::new((22 -shl 16) -bor 24)
                 if (![PixiWindowProbe]::PostMessage($window, 0x0201, [UIntPtr]::new([uint32]1), $point) -or
-                    ![PixiWindowProbe]::PostMessage($window, 0x0202, [UIntPtr]::Zero, $point)) {
+                    ![PixiWindowProbe]::PostMessage($window, 0x0202, [UIntPtr]::Zero, $point) -or
+                    ![PixiWindowProbe]::PostMessage($window, 0x0204, [UIntPtr]::new([uint32]2), $point) -or
+                    ![PixiWindowProbe]::PostMessage($window, 0x0205, [UIntPtr]::Zero, $point)) {
                     throw 'Could not send pointer input to the PixiJS smoke test window'
+                }
+                $screen = New-Object PixiWindowProbe+Point
+                $screen.X = 24
+                $screen.Y = 22
+                if (![PixiWindowProbe]::ClientToScreen($window, [ref]$screen)) {
+                    throw 'Could not locate the PixiJS smoke test window'
+                }
+                $wheelPoint = [IntPtr]::new((($screen.Y -band 0xffff) -shl 16) -bor ($screen.X -band 0xffff))
+                if (![PixiWindowProbe]::PostMessage($window, 0x020a, [UIntPtr]::new([uint32](120 -shl 16)), $wheelPoint)) {
+                    throw 'Could not send wheel input to the PixiJS smoke test window'
                 }
                 $found = $true
                 break
@@ -58,7 +77,7 @@ try {
     Get-Content -LiteralPath $stdout
     Get-Content -LiteralPath $stderr
     if (!$found -or $process.ExitCode -ne 0 -or
-        !(Select-String -Quiet -LiteralPath $stdout -Pattern 'PixiJS Application WebGL draw, PNG asset, ticker, resize and input passed')) {
+        !(Select-String -Quiet -LiteralPath $stdout -Pattern 'PixiJS Application WebGL draw, gradients, spritesheet, ticker, resize and mouse input passed')) {
         throw "The PixiJS native Windows smoke test failed. Exit code: $($process.ExitCode)"
     }
 } finally {

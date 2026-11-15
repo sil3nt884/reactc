@@ -51,8 +51,8 @@ The native canvas supports solid fills and strokes for rectangles and paths
 with straight or Bézier segments, plus transforms, clipping, resizing, and
 RGBA readback. `OffscreenCanvas.fromFile(path)` loads a local image into a
 canvas that can be drawn with `drawImage` or used as a PixiJS sprite texture.
-Use `dispose()` to release each canvas. Canvas2D text, arcs and gradients
-remain open.
+Canvas2D supports text and linear and radial gradients. Use `dispose()`
+to release each canvas.
 
 The window probe uses PixiJS's `Application` with its Canvas2D renderer.
 Click the window to move the sprite and resize the window to change the
@@ -80,7 +80,10 @@ reactc.exe build scripts/ci/pixi/webgl.server.js --target windows --outdir dist/
 The native WebGL application uses PixiJS's standard `Application`,
 `Assets.load()`, ticker, resize plugin and federated pointer events.
 `installCanvasEnvironment()` supplies PixiJS's DOM adapter and browser
-event bindings. The application owns the event loop and calls
+event bindings. Pass `pixi: { DOMAdapter, ExtensionType, extensions }` when
+installing the adapter so `Application.init()` selects the native PixiJS
+environment. Import the PixiJS features you use, as shown in
+[`application.server.js`](application.server.js). The application owns the event loop and calls
 `pollEvent(canvas)` before presenting the frame.
 Give the adapter a base file URL and a path resolver to load relative
 images. The optional `readFile` callback also routes asset metadata
@@ -96,8 +99,10 @@ Use `--no-console` or set `"console": false` in `reactc.config.json` to
 launch the canvas executable in the Windows GUI subsystem.
 
 Run the Windows smoke test from the repository root. It checks pixels from
-the PNG sprite and a PixiJS render texture, resizes the window, clicks the
-rectangle and checks the sprite at its new position.
+the spritesheet, render texture, text, mask, filter, and linear and radial
+gradient fills. It also resizes
+the window and verifies clicks, right-button input, scrolling and ticker
+animation.
 
 ```powershell
 .\scripts\ci\pixi\test-window.ps1 -Executable .\dist\pixi\PixiApplication.exe
