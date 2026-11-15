@@ -140,7 +140,20 @@ fn run(options: &Options, script: &str) -> Result<()> {
         );
         Command::new("wsl.exe").args(["-e", "bash", "-c", &script]).output()
     } else {
-        Command::new("sh").arg("-c").arg(script).current_dir(root).output()
+        // Like the WSL path above: the bundled toolchain's sysroot has the
+        // headers and libraries reactc links (libuv, OpenSSL, zlib, ...),
+        // so it comes before whatever cc/c++ the system has, if any.
+        let mut command = Command::new("sh");
+        let local = root.join("tools/local/bin");
+        if local.is_dir() {
+            let mut path = std::ffi::OsString::from(local);
+            if let Some(existing) = std::env::var_os("PATH") {
+                path.push(":");
+                path.push(existing);
+            }
+            command.env("PATH", path);
+        }
+        command.arg("-c").arg(script).current_dir(root).output()
     }
     .with_context(|| format!("cannot start the native toolchain ({})", script.split(' ').next().unwrap_or_default()))?;
     if !output.status.success() {
