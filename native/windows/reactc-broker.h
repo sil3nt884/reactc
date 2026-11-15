@@ -139,8 +139,10 @@ static void broker_send(const char *command) {
 static void broker_stop(void) {
     InterlockedExchange(&broker_stopping, 1);
     SetEvent(broker_wake);
+#ifdef NATIVE_CORE_IN_PROCESS
     EnterCriticalSection(&to_core.lock);
     to_core.closed = true;
     LeaveCriticalSection(&to_core.lock);
     WakeAllConditionVariable(&to_core.changed);
+#endif
 }

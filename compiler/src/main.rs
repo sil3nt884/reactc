@@ -34,6 +34,8 @@ pub enum Target {
     Windows,
     /// A WASI Preview 1 command that speaks the page protocol.
     Wasm,
+    /// An arm64 APK hosting a WASI page.
+    Android,
 }
 
 #[derive(Clone)]
@@ -72,6 +74,7 @@ pub struct Options {
 
 const USAGE: &str = "usage: reactc build [<entry>] [options]
        reactc start [options]                  run the programs a configured project built
+       reactc pack APP.wasm --target windows|android [options]
        reactc new <folder> [--template NAME]   start a project (templates: reactc new --list)
 
   <entry>                 a UI component (.tsx, .jsx, .ts, .js) or a server module
@@ -79,9 +82,9 @@ const USAGE: &str = "usage: reactc build [<entry>] [options]
   --only server|client    with a configuration and no entry: build one side
   --server                build <entry> as a server
   --no-console            build a standalone Windows entry without a console window
-  --target windows|linux|wasm
+  --target windows|linux|wasm|android
                           windows: a Windows .exe (the default when reactc runs on Windows);
-                          linux (or host): a Linux program; wasm: a WASI module
+                          linux (or host): a Linux program; wasm: a WASI module; android: an arm64 APK
   --outdir DIR  --root DIR  --name NAME  --title TEXT  --http-origin URL
   --async-page  --react-compiler  --native  --emit-c
 
@@ -181,8 +184,8 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
     // Windows is the native target of a Windows build machine.
     let default_target = if cfg!(windows) { Target::Windows } else { Target::Host };
     let target = settings.target.unwrap_or(default_target);
-    if server && target == Target::Wasm {
-        bail!("server entries use --target host or --target windows");
+    if server && matches!(target, Target::Wasm | Target::Android) {
+        bail!("server entries use --target host or --target windows; use --only client for a configured Android or WASM page");
     }
     let http_origin = settings.http_origin.as_deref().map(valid_origin).transpose()?;
     if server && (http_origin.is_some() || settings.async_page == Some(true) ||
@@ -203,10 +206,11 @@ fn resolve(entry: PathBuf, settings: config::Settings, forbidden: Vec<PathBuf>, 
             Target::Windows => "windows",
             Target::Host => "linux",
             Target::Wasm => "wasm",
+            Target::Android => "android",
         });
     }
     if let Some(side) = project_side { outdir = outdir.join(side.label()); }
-    let next_app = !server && target != Target::Wasm && next::App::discover(&entry)?.is_some();
+    let next_app = !server && !matches!(target, Target::Wasm | Target::Android) && next::App::discover(&entry)?.is_some();
     Ok(Options {
         entry,
         outdir,
@@ -331,14 +335,18 @@ fn install_dependencies(project: &Path, root: &Path) -> Result<()> {
     let has = |section: &str| package.get(section).and_then(|value| value.as_object()).is_some_and(|map| !map.is_empty());
     if !has("dependencies") && !has("devDependencies") { return Ok(()); }
     println!("Installing dependencies (first build only)...");
-    let bundled_node = root.join("tools").join("node");
-    let npm_cli = bundled_node.join("node_modules").join("npm").join("bin").join("npm-cli.js");
-    let node_exe = bundled_node.join("node.exe");
-    let mut npm = if cfg!(windows) && node_exe.is_file() && npm_cli.is_file() {
+    let (node_bin, npm_cli, node_exe) = if cfg!(windows) {
+        let node = root.join("tools/node");
+        (node.clone(), node.join("node_modules/npm/bin/npm-cli.js"), node.join("node.exe"))
+    } else {
+        let node = root.join("tools/local/node-v22.16.0-linux-x64");
+        (node.join("bin"), node.join("lib/node_modules/npm/bin/npm-cli.js"), node.join("bin/node"))
+    };
+    let mut npm = if node_exe.is_file() && npm_cli.is_file() {
         let mut command = std::process::Command::new(node_exe);
         command.arg(npm_cli);
         let path = std::env::var_os("PATH").unwrap_or_default();
-        let paths = std::iter::once(bundled_node).chain(std::env::split_paths(&path));
+        let paths = std::iter::once(node_bin).chain(std::env::split_paths(&path));
         command.env("PATH", std::env::join_paths(paths)?);
         command
     } else if cfg!(windows) {
@@ -360,6 +368,7 @@ fn executable(options: &Options) -> PathBuf {
         Target::Windows => options.outdir.join(format!("{}.exe", options.name)),
         Target::Host => options.outdir.join(if options.server { options.name.as_str() } else { "app" }),
         Target::Wasm => options.outdir.join(format!("{}.wasm", options.name)),
+        Target::Android => options.outdir.join(format!("{}.apk", options.name)),
     }
 }
 
@@ -372,7 +381,7 @@ fn start(builds: &[Options], project: Option<&Path>) -> Result<()> {
     let runs_here = |target: Target| match target {
         Target::Windows => cfg!(windows),
         Target::Host => cfg!(target_os = "linux"),
-        Target::Wasm => false,
+        Target::Wasm | Target::Android => false,
     };
     if let Some(other) = builds.iter().find(|options| !runs_here(options.target)) {
         bail!("{:?} programs do not run on this system; pass --target {}", other.target, if cfg!(windows) { "windows" } else { "linux" });
@@ -427,6 +436,9 @@ async fn main() -> Result<()> {
     let command = std::env::args().nth(1);
     if command.as_deref() == Some("new") {
         return new_project();
+    }
+    if command.as_deref() == Some("pack") {
+        return pack_wasm();
     }
     if !matches!(command.as_deref(), Some("build" | "start")) {
         bail!("{USAGE}");
@@ -524,9 +536,11 @@ async fn build(options: &Options) -> Result<()> {
         bail!("entry file not found: {}", options.entry.display());
     }
     std::fs::create_dir_all(&options.outdir)?;
-    let report = bundle::bundle(options).await?;
-    check_boundary(options, &report.modules)?;
     let mut options = options.clone();
+    let android = options.target == Target::Android;
+    if android { options.target = Target::Wasm; }
+    let report = bundle::bundle(&options).await?;
+    check_boundary(&options, &report.modules)?;
     let options = &mut options;
     options.threads = report.threads || !report.workers.is_empty();
     options.shared_heap = report.shared_heap;
@@ -586,10 +600,12 @@ async fn build(options: &Options) -> Result<()> {
         "reactCompilerRewrote": report.memoised,
         "fallback": "not implemented",
         "nativeRequested": options.native,
-        "nativeTarget": match options.target {
-            Target::Host => "host",
-            Target::Windows => "windows-x64",
-            Target::Wasm => "wasm32-wasip1",
+        "nativeTarget": match (android, options.target) {
+            (true, _) => "android-arm64-apk",
+            (_, Target::Host) => "host",
+            (_, Target::Windows) => "windows-x64",
+            (_, Target::Wasm) => "wasm32-wasip1",
+            (_, Target::Android) => unreachable!("Android pages lower via WASI"),
         },
         "cSources": c_sources,
         "asyncRequestFrames": options.async_page,
@@ -609,6 +625,53 @@ async fn build(options: &Options) -> Result<()> {
     if options.native {
         let linked = native::link(options)?;
         println!("native executable -> {}", linked.display());
+        if android {
+            options.target = Target::Android;
+            let apk = native::pack_android(options, &linked)?;
+            println!("Android APK -> {}", apk.display());
+        }
     }
+    Ok(())
+}
+
+fn pack_wasm() -> Result<()> {
+    use std::io::Read;
+
+    let mut args = std::env::args().skip(2);
+    let mut settings = config::Settings::default();
+    let mut module = None;
+    while let Some(arg) = args.next() {
+        let value = || format!("{arg} needs a value");
+        match arg.as_str() {
+            "--target" => settings.target = Some(config::parse_target(&args.next().with_context(value)?)?),
+            "--outdir" => settings.outdir = Some(args.next().with_context(value)?.into()),
+            "--root" => settings.root = Some(args.next().with_context(value)?.into()),
+            "--name" => settings.name = Some(args.next().with_context(value)?),
+            "--title" => settings.title = Some(args.next().with_context(value)?),
+            "--http-origin" => settings.http_origin = Some(args.next().with_context(value)?),
+            _ if arg.starts_with('-') || module.is_some() => bail!("unexpected argument {arg}"),
+            _ => module = Some(PathBuf::from(arg)),
+        }
+    }
+    let target = settings.target.unwrap_or(Target::Windows);
+    if !matches!(target, Target::Windows | Target::Android) {
+        bail!("pack requires --target windows or --target android");
+    }
+    settings.target = Some(target);
+    let module = absolute(module.context("usage: reactc pack APP.wasm --target windows|android [--outdir DIR]")?)?;
+    let mut header = [0; 8];
+    std::fs::File::open(&module).with_context(|| format!("cannot open {}", module.display()))?
+        .read_exact(&mut header).context("expected a WASM module")?;
+    if &header != b"\0asm\x01\0\0\0" {
+        bail!("{} is not a WASM command module", module.display());
+    }
+    let options = resolve(module.clone(), settings, Vec::new(), false, None, false)?;
+    std::fs::create_dir_all(&options.outdir)?;
+    let packed = if target == Target::Windows {
+        native::pack_windows(&options, &module)?
+    } else {
+        native::pack_android(&options, &module)?
+    };
+    println!("packed -> {}", packed.display());
     Ok(())
 }

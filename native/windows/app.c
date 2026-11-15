@@ -10,11 +10,13 @@
 #include "json.h"
 #include "skia.h"
 #include "svg.h"
+#ifndef NATIVE_WASM_APP
 int reactc_core_main(int,char**);
+#endif
 #ifndef NATIVE_APP_TITLE
 #define NATIVE_APP_TITLE L"Native App"
 #endif
-#ifndef NATIVE_CORE_IN_PROCESS
+#if !defined(NATIVE_WASM_APP) && !defined(NATIVE_CORE_IN_PROCESS)
 #define NATIVE_CORE_IN_PROCESS
 #endif
 #include "reactc-http.h"
@@ -29,6 +31,9 @@ static HWND window,editor;
 static HMODULE skia;
 static HANDLE job;
 static wchar_t library_dir[MAX_PATH],library_path[MAX_PATH];
+#ifdef NATIVE_WASM_APP
+static wchar_t runtime_path[MAX_PATH], module_path[MAX_PATH];
+#endif
 static struct Json *snapshot,*reply;
 static int changing,editing,scroll,content_height,width=430,height=850,box_count;
 enum { BOX_ID_CAPACITY = 1024 };
@@ -56,7 +61,14 @@ struct Box {int node,props;float x,y,w,h,size;int kind,end;wchar_t public_id[BOX
 static struct Box boxes[4096];
 static struct Box pressed;
 static bool pointer_pressed;
+#ifdef NATIVE_WASM_APP
+static bool custom_window_frame = true;
+static UINT hovered_caption_command;
+static uint32_t window_border_color = 0xff939ba9;
+#else
 static bool custom_window_frame;
+#endif
+static UINT pressed_caption_command;
 static int titlebar_node, titlebar_box = -1;
 enum { WINDOW_LICENSES = 0x1f10 };
 static float chrome_height = 40, paint_top = 40;
@@ -102,7 +114,12 @@ static const wchar_t *routes[]={L"/"};
 static void stop_peer(struct Peer *p){if(p->input)CloseHandle(p->input);p->input=NULL;if(p->process){if(WaitForSingleObject(p->process,1500)!=WAIT_OBJECT_0)TerminateProcess(p->process,1);CloseHandle(p->process);}if(p->output)CloseHandle(p->output);memset(p,0,sizeof(*p));}
 static void cleanup(void){
  clear_scroll_requests();
- stop_peer(&core);stop_peer(&fixture);if(job)CloseHandle(job);if(surface)sk_surface_unref(surface);if(font)sk_font_delete(font);if(bold_font)sk_font_delete(bold_font);if(mono_font)sk_font_delete(mono_font);if(italic_font)sk_font_delete(italic_font);if(bold_italic_font)sk_font_delete(bold_italic_font);if(paint)sk_paint_delete(paint);if(face)sk_typeface_unref(face);if(skia)FreeLibrary(skia);if(*library_path)DeleteFileW(library_path);if(*library_dir)RemoveDirectoryW(library_dir);
+ stop_peer(&core);stop_peer(&fixture);if(job)CloseHandle(job);if(surface)sk_surface_unref(surface);if(font)sk_font_delete(font);if(bold_font)sk_font_delete(bold_font);if(mono_font)sk_font_delete(mono_font);if(italic_font)sk_font_delete(italic_font);if(bold_italic_font)sk_font_delete(bold_italic_font);if(paint)sk_paint_delete(paint);if(face)sk_typeface_unref(face);if(skia)FreeLibrary(skia);if(*library_path)DeleteFileW(library_path);
+#ifdef NATIVE_WASM_APP
+ if(*runtime_path)DeleteFileW(runtime_path);
+ if(*module_path)DeleteFileW(module_path);
+#endif
+ if(*library_dir)RemoveDirectoryW(library_dir);
 }
 static void fail(const char *message){
  if(on_native_worker){broker_fail(message);return;}
@@ -111,19 +128,42 @@ static void fail(const char *message){
  MessageBoxW(window,wide,APP_TITLE,MB_ICONERROR|MB_OK);
  cleanup();ExitProcess(1);
 }
-static struct Peer start_peer(const wchar_t *mode){
+#ifdef NATIVE_WASM_APP
+static void unpack_wasm(int id, const wchar_t *name, wchar_t *path){
+ if(swprintf(path,MAX_PATH,L"%ls\\%ls",library_dir,name)<0)fail("Embedded WASM directory path is too long");
+ HRSRC resource=FindResourceW(NULL,MAKEINTRESOURCEW(id),RT_RCDATA);
+ if(!resource)fail("Embedded WASM resource missing");
+ HGLOBAL loaded=LoadResource(NULL,resource);
+ DWORD size=SizeofResource(NULL,resource),written=0;
+ const void *bytes=loaded?LockResource(loaded):NULL;
+ HANDLE file=CreateFileW(path,GENERIC_WRITE,0,NULL,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,NULL);
+ if(file==INVALID_HANDLE_VALUE)fail("Cannot create embedded WASM file");
+ bool success=bytes&&size&&WriteFile(file,bytes,size,&written,NULL)&&written==size;
+ CloseHandle(file);
+ if(!success)fail("Cannot unpack embedded WASM file");
+}
+
+static void core_start(void){
+ unpack_wasm(103,L"wasmtime.exe",runtime_path);
+ unpack_wasm(104,L"app.cwasm",module_path);
  struct Peer p={0};SECURITY_ATTRIBUTES sa={sizeof(sa),NULL,TRUE};HANDLE input,output;
  if(!CreatePipe(&input,&p.input,&sa,0)||!CreatePipe(&p.output,&output,&sa,0))fail("Cannot create native protocol pipes");
  SetHandleInformation(p.input,HANDLE_FLAG_INHERIT,0);SetHandleInformation(p.output,HANDLE_FLAG_INHERIT,0);
  STARTUPINFOW si={0};si.cb=sizeof(si);si.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;si.wShowWindow=SW_HIDE;
- si.hStdInput=input;si.hStdOutput=output;si.hStdError=GetStdHandle(STD_ERROR_HANDLE);
- wchar_t exe[MAX_PATH],command[MAX_PATH+80];GetModuleFileNameW(NULL,exe,MAX_PATH);swprintf(command,MAX_PATH+80,L"\"%ls\" %ls",exe,mode);
+ HANDLE errors=CreateFileW(L"NUL",GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&sa,OPEN_EXISTING,0,NULL);
+ if(errors==INVALID_HANDLE_VALUE)fail("Cannot open WASM diagnostics stream");
+ si.hStdInput=input;si.hStdOutput=output;si.hStdError=errors;
+ wchar_t command[2*MAX_PATH+100];
+ swprintf(command,2*MAX_PATH+100,L"\"%ls\" run --allow-precompiled -W exceptions=y -O opt-level=0 \"%ls\"",runtime_path,module_path);
  PROCESS_INFORMATION info;
- if(!CreateProcessW(exe,command,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&info))fail("Cannot start compiled native service");
- CloseHandle(input);CloseHandle(output);CloseHandle(info.hThread);p.process=info.hProcess;
+ BOOL started=CreateProcessW(runtime_path,command,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&info);
+ CloseHandle(input);CloseHandle(output);CloseHandle(errors);
+ if(!started)fail("Cannot start embedded Wasmtime");
+ CloseHandle(info.hThread);p.process=info.hProcess;
+ core=p;
  if(job&&!AssignProcessToJobObject(job,p.process))fail("Cannot attach native child to application job");
- return p;
 }
+#endif
 /* Set REACTC_TIMING=1 to append per-step durations to reactc-timing.log. */
 static double timing_now(void){LARGE_INTEGER count,frequency;QueryPerformanceCounter(&count);QueryPerformanceFrequency(&frequency);return count.QuadPart*1000.0/frequency.QuadPart;}
 static void timing_log(const char *step,double started){
@@ -142,7 +182,7 @@ static void receive(struct Peer *p,struct Json *d){
  /* Take whatever the pipe holds in one read. An empty pipe is polled by
     yielding first: Sleep(1) lasts a whole scheduler tick (about 15 ms) on
     Windows, and a reply usually arrives in many small writes. */
- size_t len=0;ULONGLONG deadline=GetTickCount64()+15000;unsigned idle=0;bool complete=false;
+ size_t len=0;ULONGLONG deadline=GetTickCount64()+60000;unsigned idle=0;bool complete=false;
  while(!complete){
   if(p->pending_start==p->pending_end){
    DWORD available=0,n=0;if(!PeekNamedPipe(p->output,NULL,0,NULL,&available,NULL))fail("Native subprocess pipe closed");
@@ -440,17 +480,38 @@ static LRESULT frame_hit_test(HWND hwnd,LPARAM point) {
   if(left||right)return left?HTLEFT:HTRIGHT;
  }
  ScreenToClient(hwnd,&screen);
- if(screen.y>=0&&screen.y<chrome_height&&!caption_control(screen.x,screen.y))return HTCAPTION;
+ if(screen.y>=0&&screen.y<chrome_height){
+#ifdef NATIVE_WASM_APP
+  if(default_caption_command(screen.x,screen.y))return HTCLIENT;
+#endif
+  if(!caption_control(screen.x,screen.y))return HTCAPTION;
+ }
  return HTCLIENT;
 }
 
 #include "keyboard.h"
+#ifdef NATIVE_WASM_APP
+static void set_window_border(HWND hwnd, bool active) {
+ HIGHCONTRASTW contrast={.cbSize=sizeof(contrast)};
+ window_border_color=active?0xff5c687c:0xff939ba9;
+ if(SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(contrast),&contrast,0)&&(contrast.dwFlags&HCF_HIGHCONTRASTON)){
+  COLORREF color=GetSysColor(COLOR_WINDOWTEXT);
+  window_border_color=0xff000000|((uint32_t)GetRValue(color)<<16)|((uint32_t)GetGValue(color)<<8)|GetBValue(color);
+ }
+ InvalidateRect(hwnd,NULL,FALSE);
+}
+#endif
+
 static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  static int hovered_link;
- static UINT pressed_caption_command;
  switch(message){
  case REACTC_FRAME:native_apply_frame(hwnd,(struct ReactcFrame *)lp);return 0;
  case REACTC_BROWSER_DIALOG:return reactc_browser_dialog(hwnd,(const struct ReactcBrowserDialog *)lp);
+#ifdef NATIVE_WASM_APP
+ case WM_NCACTIVATE:
+  set_window_border(hwnd,wp!=0);
+  break;
+#endif
  case WM_NCCALCSIZE:
   if(custom_window_frame){
    if(IsZoomed(hwnd)){
@@ -503,6 +564,14 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
   for(int i=box_count-1;i>=floor;i--)if((boxes[i].kind==9||boxes[i].kind==10)&&in_box(&boxes[i],GET_X_LPARAM(lp),GET_Y_LPARAM(lp))){hovered=i+1;break;}
   if(hovered!=hovered_link){hovered_link=hovered;InvalidateRect(hwnd,NULL,FALSE);}
   bool hand=hovered!=0,track_leave=hovered!=0;
+#ifdef NATIVE_WASM_APP
+  UINT hover_command=default_caption_command(GET_X_LPARAM(lp),GET_Y_LPARAM(lp));
+  if(hovered_caption_command!=hover_command){
+   hovered_caption_command=hover_command;
+   InvalidateRect(hwnd,NULL,FALSE);
+  }
+  if(hover_command)track_leave=true;
+#endif
   if(native_interaction_styles()){
    pointer_inside=true;pointer_x=GET_X_LPARAM(lp);pointer_y=GET_Y_LPARAM(lp);track_leave=true;
    // Stylesheet cursor values are inherited, so the innermost box decides.
@@ -522,6 +591,9 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  }
  case WM_MOUSELEAVE:
   hovered_link=0;
+#ifdef NATIVE_WASM_APP
+  hovered_caption_command=0;
+#endif
   {
    // Entering the native edit control also reports a leave. Keep the hover
    // chain while the pointer is over that child window.
@@ -558,6 +630,16 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  case WM_LBUTTONDOWN:{
   int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
   if(custom_window_frame&&y<chrome_height){
+#ifdef NATIVE_WASM_APP
+   UINT command=default_caption_command(x,y);
+   if(command){
+    pressed=(struct Box){0};
+    pressed_caption_command=command;
+    SetCapture(hwnd);
+    InvalidateRect(hwnd,NULL,FALSE);
+    return 0;
+   }
+#endif
    struct Box *control=caption_control(x,y);
    if(!control)return 0;
    int node=find_identity(get(snapshot,1,"tree"),control->public_id,control->native_id);
@@ -606,13 +688,23 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
    UINT command=pressed_caption_command;
    pressed_caption_command=0;
    ReleaseCapture();
-   struct Box *control=caption_control(GET_X_LPARAM(lp),GET_Y_LPARAM(lp));
+   int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
+   bool activate_command=false;
+#ifdef NATIVE_WASM_APP
+   if(!pressed.node){
+    hovered_caption_command=default_caption_command(x,y);
+    activate_command=command==hovered_caption_command;
+    InvalidateRect(hwnd,NULL,FALSE);
+   }
+#endif
+   struct Box *control=caption_control(x,y);
    if(control&&same_control(control,&pressed)){
     int node=find_identity(get(snapshot,1,"tree"),control->public_id,control->native_id);
-    if(node&&command==caption_command(node)&&!equal(snapshot,get(snapshot,props(node),"disabled"),"true")){
-     if(command==SC_MAXIMIZE&&IsZoomed(hwnd))command=SC_RESTORE;
-     PostMessageW(hwnd,WM_SYSCOMMAND,command,0);
-    }
+    activate_command=node&&command==caption_command(node)&&!equal(snapshot,get(snapshot,props(node),"disabled"),"true");
+   }
+   if(activate_command){
+    if(command==SC_MAXIMIZE&&IsZoomed(hwnd))command=SC_RESTORE;
+    PostMessageW(hwnd,WM_SYSCOMMAND,command,0);
    }
    return 0;
   }
@@ -632,6 +724,7 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
   }
   return 0;
  case WM_CAPTURECHANGED:
+  if(pressed_caption_command)InvalidateRect(hwnd,NULL,FALSE);
   pressed_caption_command=0;
   if(sheet_motion.dragging){sheet_end_drag(&sheet_motion,GetTickCount64(),true,document_reduce_motion);InvalidateRect(hwnd,NULL,FALSE);}
   if(pointer_pressed){pointer_pressed=false;InvalidateRect(hwnd,NULL,FALSE);}
@@ -691,9 +784,6 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  }return DefWindowProcW(hwnd,message,wp,lp);
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int show){
-#ifndef NATIVE_CORE_IN_PROCESS
- if(!wcscmp(command,L"--core")){char *argv[]={APP_CORE_NAME,NULL};return reactc_core_main(1,argv);}
-#endif
  smoke=!wcscmp(command,L"--smoke");
  if(*command&&!smoke)return 2;
  SetProcessDPIAware();snapshot=calloc(1,sizeof(*snapshot));reply=calloc(1,sizeof(*reply));if(!snapshot||!reply)fail("Cannot allocate native protocol buffers");
@@ -706,6 +796,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
  WNDCLASSW cls={0};cls.style=custom_window_frame?CS_DBLCLKS:0;cls.lpfnWndProc=procedure;cls.hInstance=instance;cls.lpszClassName=L"PTPorfforSkiaNative";cls.hCursor=LoadCursor(NULL,IDC_ARROW);if(!RegisterClassW(&cls))fail("Cannot register Windows app class");
  DWORD window_style=WS_OVERLAPPEDWINDOW|(custom_window_frame?0:WS_VSCROLL);
  window=CreateWindowExW(0,cls.lpszClassName,APP_TITLE,window_style,CW_USEDEFAULT,CW_USEDEFAULT,470,900,NULL,NULL,instance,NULL);if(!window)fail("Cannot create native Windows window");
+#ifdef NATIVE_WASM_APP
+ set_window_border(window,false);
+#else
  if(custom_window_frame){
   HMENU system_menu=GetSystemMenu(window,FALSE);
   AppendMenuW(system_menu,MF_SEPARATOR,0,NULL);
@@ -714,6 +807,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int sho
  HMENU menu=CreateMenu();
  AppendMenuW(menu,MF_STRING,900,L"Licenses");SetMenu(window,menu);
  }
+#endif
  core_start();
  broker_start(window);
  ShowWindow(window,show);UpdateWindow(window);

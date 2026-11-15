@@ -116,7 +116,9 @@ const linuxToolchain = !nativeWindows && (nativeTools.length === 0 || existsSync
 const tools = linuxToolchain
   ? ['porf', 'local', 'skia-win', 'node-win', 'ada-win', 'node-host', 'ada', 'http2-host', 'http2-win']
   : ['skia-win', 'node-win', 'ada-win', 'http2-win'];
+if (existsSync(join(toolsDir, 'wasmtime-pack-windows', 'wasmtime.exe'))) tools.push('wasmtime-pack-windows');
 if (linuxToolchain && args.includes('--wasm')) tools.push('wasi-sdk', 'wasmtime', 'wasmtime-c-linux', 'ada-wasi');
+if (linuxToolchain && existsSync(join(toolsDir, 'wasmtime-pack-linux', 'wasmtime'))) tools.push('wasmtime-pack-linux');
 // the Android runtime's C API is optional (it needs the Android NDK; see native/wasm/README.md)
 if (linuxToolchain && args.includes('--wasm') && existsSync(join(toolsDir, 'wasmtime-c-android'))) tools.push('wasmtime-c-android');
 if (!linuxToolchain && args.includes('--wasm')) throw new Error('--wasm needs the Linux toolchain: run npm run setup -- --wasm (WSL)');
@@ -150,7 +152,11 @@ if (nativeWindows) {
   cpSync(join(nodeDir, 'node_modules', 'npm'), join(target, 'node_modules', 'npm'), { recursive: true });
   tools.push('node');
 }
-const requirements = nativeWindows
+const requirements = packageOs === 'linux'
+  ? 'This package includes the C toolchain, Node, and npm for Linux x86-64.\n' +
+    'It requires glibc at least as new as Ubuntu 26.04\'s. Keep the extracted folder together.\n' +
+    'Projects still need any npm dependencies they declare. Install them ahead of an offline build.'
+  : nativeWindows
   ? 'This package includes the tools for Windows x64 builds, including Node and npm.\n' +
     'Keep the entire extracted folder together. Builds and generated apps run without WSL.'
   : nativeTools.length
@@ -218,14 +224,18 @@ reactc ${version} packaged in ${out} (no self-test)`);
 }
 const scratch = mkdtempSync(join(tmpdir(), 'reactc-package-'));
 const packaged = join(out, 'bin', exe);
-if (nativeWindows) {
+const linuxSmoke = packageOs === 'linux' && args.includes('--smoke-native');
+const linuxEnv = { PATH: '/usr/bin:/bin', HOME: scratch, npm_config_offline: 'true' };
+if (nativeWindows || linuxSmoke) {
   // A separate project, no compiler files or configuration pointing back at the checkout.
   const project = join(scratch, 'project with spaces');
   const source = join(project, 'src');
   mkdirSync(source, { recursive: true });
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-    !['PATH', 'REACTC_HOME', 'REACTC_WSL', 'REACTC_NODE', 'PORFFOR_BIN', 'PORFFOR_SOURCE'].includes(key.toUpperCase())));
-  env.PATH = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+  const env = nativeWindows ? {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !['PATH', 'REACTC_HOME', 'REACTC_WSL', 'REACTC_NODE', 'PORFFOR_BIN', 'PORFFOR_SOURCE'].includes(key.toUpperCase()))),
+    PATH: join(process.env.SystemRoot ?? 'C:\\Windows', 'System32'),
+  } : linuxEnv;
   try {
     writeFileSync(join(project, 'reactc.config.json'), JSON.stringify({
       outDir: 'dist',
@@ -238,15 +248,18 @@ if (nativeWindows) {
     writeFileSync(join(dependency, 'index.js'), 'exports.label = "Packaged ReactC";\n');
     writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'smoke-label': 'file:dependency' } }));
     writeFileSync(join(source, 'App.tsx'), 'import { label } from "smoke-label";\nexport default function App() { return <main>{label}</main>; }\n');
-    run(packaged, ['build', '--target', 'windows'], { cwd: project, env });
-    if (!existsSync(join(project, 'dist', 'windows', 'PackagedApp.exe'))) {
-      throw new Error('The packaged compiler produced no Windows executable');
-    }
-    console.log('Native self-test built PackagedApp.exe from reactc.config.json');
+    const target = nativeWindows ? 'windows' : 'linux';
+    run(packaged, ['build', '--target', target], { cwd: project, env });
+    const binary = join(project, 'dist', target, nativeWindows ? 'PackagedApp.exe' : 'app');
+    if (!existsSync(binary)) throw new Error('The packaged compiler produced no executable');
+    console.log('Native self-test built ' + binary + ' from reactc.config.json');
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
   }
-  process.exit(0);
+  if (nativeWindows) {
+    rmSync(scratch, { recursive: true, force: true });
+    process.exit(0);
+  }
 }
 // a project from the packaged template, its client bundled
 const project = join(scratch, 'app');
@@ -258,7 +271,7 @@ if (args.includes('--smoke-native')) {
   // its server (node:http and @reactc/threads) compiled to a native executable
   const target = packageOs === 'windows' ? 'windows' : 'host';
   run(packaged, ['build', join(project, 'server', 'index.ts'), '--server', '--target', target,
-    '--name', 'PackagedServer', '--outdir', join(scratch, 'native')], { cwd: scratch });
+    '--name', 'PackagedServer', '--outdir', join(scratch, 'native')], { cwd: scratch, env: linuxSmoke ? linuxEnv : process.env });
   const binary = join(scratch, 'native', packageOs === 'windows' ? 'PackagedServer.exe' : 'PackagedServer');
   if (!existsSync(binary)) throw new Error('The packaged compiler produced no executable');
   console.log('Native self-test built ' + binary);

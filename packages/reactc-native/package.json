@@ -1,6 +1,6 @@
 {
   "name": "@reactc/native",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Call functions in native libraries (anything with a C ABI) from reactc-compiled programs",
   "keywords": ["ffi", "native", "dlopen", "c", "reactc"],
   "homepage": "https://github.com/sil3nt884/reactc/tree/main/packages/reactc-native#readme",

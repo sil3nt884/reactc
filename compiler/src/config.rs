@@ -123,7 +123,8 @@ pub fn parse_target(value: &str) -> Result<Target> {
         "host" | "linux" => Target::Host,
         "windows" => Target::Windows,
         "wasm" => Target::Wasm,
-        _ => bail!("target must be host (or linux), windows, or wasm"),
+        "android" => Target::Android,
+        _ => bail!("target must be host (or linux), windows, wasm, or android"),
     })
 }
 

@@ -40,6 +40,7 @@ static void report(const wasm_name_t *message) {
 
 int main(int argc, char **argv) {
     int status = 1, arg = 1;
+    bool precompiled = false;
     wasi_config_t *wasi = wasi_config_new();
     while (arg < argc && strcmp(argv[arg], "--dir") == 0) {
         if (++arg == argc || !preopen(wasi, argv[arg])) {
@@ -49,8 +50,12 @@ int main(int argc, char **argv) {
         }
         arg++;
     }
+    if (arg < argc && strcmp(argv[arg], "--precompiled") == 0) {
+        precompiled = true;
+        arg++;
+    }
     if (arg == argc || argv[arg][0] == '-') {
-        fputs("usage: reactc-runtime [--dir HOST[::GUEST]] APP.wasm [APP_ARGS...]\n", stderr);
+        fputs("usage: reactc-runtime [--dir HOST[::GUEST]] [--precompiled] APP [APP_ARGS...]\n", stderr);
         wasi_config_delete(wasi);
         return 2;
     }
@@ -64,7 +69,7 @@ int main(int argc, char **argv) {
     wasi_config_inherit_stderr(wasi);
 
     wasm_byte_vec_t bytes = {0};
-    if (!read_module(argv[arg], &bytes)) {
+    if (!precompiled && !read_module(argv[arg], &bytes)) {
         fprintf(stderr, "reactc-runtime: cannot read %s\n", argv[arg]);
         wasm_byte_vec_delete(&bytes);
         wasi_config_delete(wasi);
@@ -85,7 +90,10 @@ int main(int argc, char **argv) {
     if (error) goto done;
     error = wasmtime_linker_define_wasi(linker);
     if (error) goto done;
-    error = wasmtime_module_new(engine, (const uint8_t *)bytes.data, bytes.size, &module);
+    // The caller must explicitly select a trusted, locally compiled artifact.
+    error = precompiled
+        ? wasmtime_module_deserialize_file(engine, argv[arg], &module)
+        : wasmtime_module_new(engine, (const uint8_t *)bytes.data, bytes.size, &module);
     if (error) goto done;
 
     wasmtime_instance_t instance;

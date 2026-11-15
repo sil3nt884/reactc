@@ -1,6 +1,6 @@
 {
   "name": "reactc-workspace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Builds reactc, a compiler from React (TSX/JSX) user interfaces and Node servers to native Windows and Linux executables, and its libraries.",
   "type": "module",
