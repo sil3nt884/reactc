@@ -41,8 +41,11 @@ jobs:
             tools/http2-win
             tools/skia-win
             tools/angle-win
+            tools/wasmtime-pack-windows
           key: windows-native-${{ runner.os }}-${{ hashFiles('scripts/setup-native.mjs', 'tools/install-*.sh') }}
       - run: npm run setup -- --native
+      - run: sh tools/install-wasmtime.sh windows
+        shell: bash
       - run: cargo test --locked --manifest-path compiler/Cargo.toml
       - run: node scripts/build-compiler.mjs --native-windows --out dist/release/reactc-windows-x64
       - name: Archive Windows package

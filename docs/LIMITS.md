@@ -122,9 +122,13 @@ renderer does not provide. See the [React compatibility table](CONVERTING.md#2-c
 
 Windows programs can import `reactc:canvas` for an offscreen Canvas2D and
 ANGLE WebGL subset. The [native PixiJS probes](../scripts/ci/pixi/README.md)
-cover native Win32 presentation, WebGL 2 renderer selection, PNG textures,
-ticker animation, resize and PixiJS pointer events. The WebGL probe also checks
-indexed textured geometry, offscreen framebuffers and pixel readback.
+cover native Win32 presentation, WebGL 2 renderer selection, PNG spritesheets,
+text, masks, a color filter, gradients, ticker animation, resize and mouse
+events. The WebGL probe also checks indexed textured geometry, offscreen
+framebuffers and pixel readback. Remaining PixiJS coverage includes keyboard,
+touch and pen input, Canvas2D arcs, ellipses, patterns and more blend modes,
+and WebGL texture formats, extensions and broader shader and filter coverage.
+The native Windows smoke test currently runs locally.
 
 - **Layout and styling.**
   - Borders are painted inside the box and do not push the content in.

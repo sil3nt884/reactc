@@ -10,11 +10,13 @@
 #include "json.h"
 #include "skia.h"
 #include "svg.h"
+#ifndef NATIVE_WASM_APP
 int reactc_core_main(int,char**);
+#endif
 #ifndef NATIVE_APP_TITLE
 #define NATIVE_APP_TITLE L"Native App"
 #endif
-#ifndef NATIVE_CORE_IN_PROCESS
+#if !defined(NATIVE_WASM_APP) && !defined(NATIVE_CORE_IN_PROCESS)
 #define NATIVE_CORE_IN_PROCESS
 #endif
 #include "reactc-http.h"
@@ -29,6 +31,9 @@ static HWND window,editor;
 static HMODULE skia;
 static HANDLE job;
 static wchar_t library_dir[MAX_PATH],library_path[MAX_PATH];
+#ifdef NATIVE_WASM_APP
+static wchar_t runtime_path[MAX_PATH], module_path[MAX_PATH];
+#endif
 static struct Json *snapshot,*reply;
 static int changing,editing,scroll,content_height,width=430,height=850,box_count;
 enum { BOX_ID_CAPACITY = 1024 };
@@ -102,7 +107,12 @@ static const wchar_t *routes[]={L"/"};
 static void stop_peer(struct Peer *p){if(p->input)CloseHandle(p->input);p->input=NULL;if(p->process){if(WaitForSingleObject(p->process,1500)!=WAIT_OBJECT_0)TerminateProcess(p->process,1);CloseHandle(p->process);}if(p->output)CloseHandle(p->output);memset(p,0,sizeof(*p));}
 static void cleanup(void){
  clear_scroll_requests();
- stop_peer(&core);stop_peer(&fixture);if(job)CloseHandle(job);if(surface)sk_surface_unref(surface);if(font)sk_font_delete(font);if(bold_font)sk_font_delete(bold_font);if(mono_font)sk_font_delete(mono_font);if(italic_font)sk_font_delete(italic_font);if(bold_italic_font)sk_font_delete(bold_italic_font);if(paint)sk_paint_delete(paint);if(face)sk_typeface_unref(face);if(skia)FreeLibrary(skia);if(*library_path)DeleteFileW(library_path);if(*library_dir)RemoveDirectoryW(library_dir);
+ stop_peer(&core);stop_peer(&fixture);if(job)CloseHandle(job);if(surface)sk_surface_unref(surface);if(font)sk_font_delete(font);if(bold_font)sk_font_delete(bold_font);if(mono_font)sk_font_delete(mono_font);if(italic_font)sk_font_delete(italic_font);if(bold_italic_font)sk_font_delete(bold_italic_font);if(paint)sk_paint_delete(paint);if(face)sk_typeface_unref(face);if(skia)FreeLibrary(skia);if(*library_path)DeleteFileW(library_path);
+#ifdef NATIVE_WASM_APP
+ if(*runtime_path)DeleteFileW(runtime_path);
+ if(*module_path)DeleteFileW(module_path);
+#endif
+ if(*library_dir)RemoveDirectoryW(library_dir);
 }
 static void fail(const char *message){
  if(on_native_worker){broker_fail(message);return;}
@@ -111,19 +121,42 @@ static void fail(const char *message){
  MessageBoxW(window,wide,APP_TITLE,MB_ICONERROR|MB_OK);
  cleanup();ExitProcess(1);
 }
-static struct Peer start_peer(const wchar_t *mode){
+#ifdef NATIVE_WASM_APP
+static void unpack_wasm(int id, const wchar_t *name, wchar_t *path){
+ if(swprintf(path,MAX_PATH,L"%ls\\%ls",library_dir,name)<0)fail("Embedded WASM directory path is too long");
+ HRSRC resource=FindResourceW(NULL,MAKEINTRESOURCEW(id),RT_RCDATA);
+ if(!resource)fail("Embedded WASM resource missing");
+ HGLOBAL loaded=LoadResource(NULL,resource);
+ DWORD size=SizeofResource(NULL,resource),written=0;
+ const void *bytes=loaded?LockResource(loaded):NULL;
+ HANDLE file=CreateFileW(path,GENERIC_WRITE,0,NULL,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,NULL);
+ if(file==INVALID_HANDLE_VALUE)fail("Cannot create embedded WASM file");
+ bool success=bytes&&size&&WriteFile(file,bytes,size,&written,NULL)&&written==size;
+ CloseHandle(file);
+ if(!success)fail("Cannot unpack embedded WASM file");
+}
+
+static void core_start(void){
+ unpack_wasm(103,L"wasmtime.exe",runtime_path);
+ unpack_wasm(104,L"app.wasm",module_path);
  struct Peer p={0};SECURITY_ATTRIBUTES sa={sizeof(sa),NULL,TRUE};HANDLE input,output;
  if(!CreatePipe(&input,&p.input,&sa,0)||!CreatePipe(&p.output,&output,&sa,0))fail("Cannot create native protocol pipes");
  SetHandleInformation(p.input,HANDLE_FLAG_INHERIT,0);SetHandleInformation(p.output,HANDLE_FLAG_INHERIT,0);
  STARTUPINFOW si={0};si.cb=sizeof(si);si.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;si.wShowWindow=SW_HIDE;
- si.hStdInput=input;si.hStdOutput=output;si.hStdError=GetStdHandle(STD_ERROR_HANDLE);
- wchar_t exe[MAX_PATH],command[MAX_PATH+80];GetModuleFileNameW(NULL,exe,MAX_PATH);swprintf(command,MAX_PATH+80,L"\"%ls\" %ls",exe,mode);
+ HANDLE errors=CreateFileW(L"NUL",GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&sa,OPEN_EXISTING,0,NULL);
+ if(errors==INVALID_HANDLE_VALUE)fail("Cannot open WASM diagnostics stream");
+ si.hStdInput=input;si.hStdOutput=output;si.hStdError=errors;
+ wchar_t command[2*MAX_PATH+100];
+ swprintf(command,2*MAX_PATH+100,L"\"%ls\" run -W exceptions=y -O opt-level=0 \"%ls\"",runtime_path,module_path);
  PROCESS_INFORMATION info;
- if(!CreateProcessW(exe,command,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&info))fail("Cannot start compiled native service");
- CloseHandle(input);CloseHandle(output);CloseHandle(info.hThread);p.process=info.hProcess;
+ BOOL started=CreateProcessW(runtime_path,command,NULL,NULL,TRUE,CREATE_NO_WINDOW,NULL,NULL,&si,&info);
+ CloseHandle(input);CloseHandle(output);CloseHandle(errors);
+ if(!started)fail("Cannot start embedded Wasmtime");
+ CloseHandle(info.hThread);p.process=info.hProcess;
+ core=p;
  if(job&&!AssignProcessToJobObject(job,p.process))fail("Cannot attach native child to application job");
- return p;
 }
+#endif
 /* Set REACTC_TIMING=1 to append per-step durations to reactc-timing.log. */
 static double timing_now(void){LARGE_INTEGER count,frequency;QueryPerformanceCounter(&count);QueryPerformanceFrequency(&frequency);return count.QuadPart*1000.0/frequency.QuadPart;}
 static void timing_log(const char *step,double started){
@@ -142,7 +175,7 @@ static void receive(struct Peer *p,struct Json *d){
  /* Take whatever the pipe holds in one read. An empty pipe is polled by
     yielding first: Sleep(1) lasts a whole scheduler tick (about 15 ms) on
     Windows, and a reply usually arrives in many small writes. */
- size_t len=0;ULONGLONG deadline=GetTickCount64()+15000;unsigned idle=0;bool complete=false;
+ size_t len=0;ULONGLONG deadline=GetTickCount64()+60000;unsigned idle=0;bool complete=false;
  while(!complete){
   if(p->pending_start==p->pending_end){
    DWORD available=0,n=0;if(!PeekNamedPipe(p->output,NULL,0,NULL,&available,NULL))fail("Native subprocess pipe closed");
@@ -691,9 +724,6 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp){
  }return DefWindowProcW(hwnd,message,wp,lp);
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE previous,LPWSTR command,int show){
-#ifndef NATIVE_CORE_IN_PROCESS
- if(!wcscmp(command,L"--core")){char *argv[]={APP_CORE_NAME,NULL};return reactc_core_main(1,argv);}
-#endif
  smoke=!wcscmp(command,L"--smoke");
  if(*command&&!smoke)return 2;
  SetProcessDPIAware();snapshot=calloc(1,sizeof(*snapshot));reply=calloc(1,sizeof(*reply));if(!snapshot||!reply)fail("Cannot allocate native protocol buffers");
