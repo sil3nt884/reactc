@@ -104,7 +104,7 @@ them. Elsewhere, install them from npm or from a release:
 
 ```sh
 npm install @reactc/threads
-npm install https://github.com/sil3nt884/reactc/releases/download/v0.1.0/reactc-threads-0.1.0.tgz
+npm install https://github.com/sil3nt884/reactc/releases/download/v0.2.0/reactc-threads-0.2.0.tgz
 ```
 
 ## Build from source

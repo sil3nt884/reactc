@@ -26,18 +26,22 @@ without opening a window. For a module built with `--http-origin`, select
 
 ## Windows
 
-Package a WASI page as a Windows x64 GUI executable with the module, Wasmtime,
-and the native Skia renderer bundled inside. On Linux use the reactc MinGW
-toolchain. On Windows, the native compiler package can pack an existing module
-without WSL.
+Package a WASI page as a Windows x64 GUI executable with the precompiled
+module, Wasmtime, and the native Skia renderer bundled inside. ReactC compiles
+the module while packaging it so the app can skip compilation at launch.
+On Linux install the reactc MinGW toolchain and run both Wasmtime installers.
+On Windows, the native compiler package can pack an existing module without WSL.
 
 ```sh
 sh tools/install-wasmtime.sh windows
+sh tools/install-wasmtime.sh linux  # Linux build hosts
 reactc pack Tasks.wasm --target windows --title "Tasks" --outdir dist/packaged
 ```
 
 `dist/packaged/Tasks.exe` runs without a separate runtime installation. Start the
 app's backend first if it uses HTTP.
+The launcher draws its own title bar and window controls. A page can supply a
+`WindowTitleBar` from `@reactc/ui` to customize the caption.
 
 Use the Windows build of Wasmtime with the Python page host. The WASI module
 is the same file used on Linux and Android. For the Tasks template, start its

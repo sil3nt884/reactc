@@ -118,7 +118,7 @@ const tools = linuxToolchain
   : ['skia-win', 'node-win', 'ada-win', 'http2-win'];
 if (existsSync(join(toolsDir, 'wasmtime-pack-windows', 'wasmtime.exe'))) tools.push('wasmtime-pack-windows');
 if (linuxToolchain && args.includes('--wasm')) tools.push('wasi-sdk', 'wasmtime', 'wasmtime-c-linux', 'ada-wasi');
-if (linuxToolchain && args.includes('--wasm') && existsSync(join(toolsDir, 'wasmtime-pack-linux', 'wasmtime'))) tools.push('wasmtime-pack-linux');
+if (linuxToolchain && existsSync(join(toolsDir, 'wasmtime-pack-linux', 'wasmtime'))) tools.push('wasmtime-pack-linux');
 // the Android runtime's C API is optional (it needs the Android NDK; see native/wasm/README.md)
 if (linuxToolchain && args.includes('--wasm') && existsSync(join(toolsDir, 'wasmtime-c-android'))) tools.push('wasmtime-c-android');
 if (!linuxToolchain && args.includes('--wasm')) throw new Error('--wasm needs the Linux toolchain: run npm run setup -- --wasm (WSL)');

@@ -877,6 +877,19 @@ pub fn pack_windows(options: &Options, module: &Path) -> Result<PathBuf> {
     std::fs::create_dir(&work)?;
     let work = WorkDir(work);
     let out = &work.0;
+    let aot_compiler = if native_toolchain(options) {
+        wasmtime.clone()
+    } else {
+        options.root.join("tools/wasmtime-pack-linux/wasmtime")
+    };
+    if !aot_compiler.is_file() {
+        bail!("Linux Wasmtime is missing; run `sh tools/install-wasmtime.sh linux`");
+    }
+    let precompiled = out.join("app.cwasm");
+    run(options, &format!(
+        "{} compile --target x86_64-pc-windows-msvc -W exceptions=y -O opt-level=0 {} -o {}",
+        tool(options, &aot_compiler)?, tool(options, module)?, tool(options, &precompiled)?
+    )).context("could not precompile the WASM module for Windows x64")?;
     let title: String = options.title.chars()
         .filter(|c| !c.is_control()).collect::<String>()
         .replace('\\', "\\\\").replace('"', "\\\"");
@@ -898,7 +911,7 @@ pub fn pack_windows(options: &Options, module: &Path) -> Result<PathBuf> {
     std::fs::write(&notices, text)?;
     let resources = out.join("wasm-resources.rc");
     let mut script = String::new();
-    for (id, path) in [(101, library.as_path()), (102, notices.as_path()), (103, wasmtime.as_path()), (104, module)] {
+    for (id, path) in [(101, library.as_path()), (102, notices.as_path()), (103, wasmtime.as_path()), (104, precompiled.as_path())] {
         let path = build_path(options, path)?.replace('\\', "\\\\").replace('"', "\\\"");
         script.push_str(&format!("{id} RCDATA \"{path}\"\n"));
     }

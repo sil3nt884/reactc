@@ -1015,6 +1015,82 @@ static void finish_draw_scope(struct DrawScope scope){
  sk_canvas_restore(canvas);
 }
 
+#ifdef NATIVE_WASM_APP
+enum { DEFAULT_CAPTION_HEIGHT = 36 };
+static const UINT default_caption_commands[] = {SC_MINIMIZE, SC_MAXIMIZE, SC_CLOSE};
+
+static float default_caption_button_width(void) {
+ return fminf(46,(float)width/3);
+}
+
+static UINT default_caption_command(int x,int y) {
+ if(titlebar_node||y<0||y>=chrome_height||x<0||x>=width)return 0;
+ float button_width=default_caption_button_width();
+ float left=width-3*button_width;
+ return x<left?0:default_caption_commands[(int)((x-left)/button_width)];
+}
+
+static void draw_default_caption(void) {
+ float button_width=default_caption_button_width(),left=width-3*button_width;
+ uint32_t ink=document_light?0xff1f2328:0xfff3f5f8;
+ SkRect bar={0,0,(float)width,chrome_height};
+ sk_paint_set_color(paint,document_light?0xffe9ebee:0xff16181c);
+ sk_canvas_draw_round_rect(canvas,&bar,0,0,paint);
+ SkRect divider={0,chrome_height-1,(float)width,chrome_height};
+ sk_paint_set_color(paint,document_light?0xffd0d4da:0xff2a2d33);
+ sk_canvas_draw_round_rect(canvas,&divider,0,0,paint);
+ if(left>12){
+  SkRect text={12,0,left-4,chrome_height};
+  sk_canvas_save(canvas);
+  sk_canvas_clip_rect_with_operation(canvas,&text,1,false);
+  sk_paint_set_color(paint,ink);
+  const wchar_t *title=APP_TITLE;
+  draw_text_units(title,wcslen(title),12,chrome_height/2+5,13,font);
+  sk_canvas_restore(canvas);
+ }
+ for(int i=0;i<3;i++){
+  UINT command=default_caption_commands[i];
+  bool hover=command==hovered_caption_command;
+  float x=left+i*button_width,y=floorf(chrome_height/2)+.5f;
+  if(hover){
+   bool down=command==pressed_caption_command;
+   uint32_t background=command==SC_CLOSE?(down?0xffb91728:0xffd92739):
+    document_light?(down?0xffcad1db:0xffd9dee6):(down?0xff414754:0xff2e333c);
+   SkRect button={x,0,x+button_width,chrome_height-1};
+   sk_paint_set_color(paint,background);
+   sk_canvas_draw_round_rect(canvas,&button,0,0,paint);
+  }
+  x=floorf(x+button_width/2)+.5f;
+  sk_paint_set_color(paint,hover&&command==SC_CLOSE?0xffffffff:ink);
+  sk_paint_set_stroke_width(paint,1);
+  if(command==SC_MINIMIZE){
+   sk_canvas_draw_line(canvas,x-5,y,x+5,y,paint);
+  }else if(command==SC_MAXIMIZE){
+   if(IsZoomed(window)){
+    sk_canvas_draw_line(canvas,x-2,y-6,x+6,y-6,paint);
+    sk_canvas_draw_line(canvas,x+6,y-6,x+6,y+2,paint);
+   }
+   SkRect icon=IsZoomed(window)?(SkRect){x-5,y-3,x+3,y+5}:(SkRect){x-5,y-5,x+5,y+5};
+   sk_paint_set_style(paint,1);
+   sk_canvas_draw_round_rect(canvas,&icon,0,0,paint);
+   sk_paint_set_style(paint,0);
+  }else{
+   sk_canvas_draw_line(canvas,x-5,y-5,x+5,y+5,paint);
+   sk_canvas_draw_line(canvas,x+5,y-5,x-5,y+5,paint);
+  }
+ }
+}
+
+static void draw_window_border(void) {
+ if(IsZoomed(window))return;
+ const SkRect edges[] = {{0,0,(float)width,1},{0,height-1,(float)width,(float)height},
+  {0,1,1,height-1},{width-1,1,(float)width,height-1}};
+ sk_paint_set_color(paint,window_border_color);
+ for(size_t i=0;i<sizeof(edges)/sizeof(*edges);i++)
+  sk_canvas_draw_round_rect(canvas,&edges[i],0,0,paint);
+}
+#endif
+
 static void native_pointer_frame(void);
 static void draw(void){
  RECT r;GetClientRect(window,&r);int w=r.right,h=r.bottom;if(w<1||h<1)return;
@@ -1040,6 +1116,9 @@ static void draw(void){
  titlebar_node=custom_window_frame?window_titlebar(tree):0;
  titlebar_box=-1;
  chrome_height=custom_window_frame?fminf(height,fmaxf(24,fminf(120,style_num(titlebar_node,"height",48)))):40;
+#ifdef NATIVE_WASM_APP
+ if(!titlebar_node)chrome_height=fminf(height,DEFAULT_CAPTION_HEIGHT);
+#endif
  paint_top=chrome_height;
  float flow_top=chrome_height+12;
  float flow_height=tree?layout(tree,0,flow_top,(float)width,0,foreground):60;
@@ -1228,6 +1307,9 @@ static void draw(void){
  if(custom_window_frame){
   sk_canvas_restore(canvas);
   paint_top=chrome_height;
+#ifdef NATIVE_WASM_APP
+  if(!titlebar_node)draw_default_caption();
+#endif
  }else{
  /* Default window chrome for apps without a WindowTitleBar follows the app's
   * light or dark root background, with a divider above the content. */
@@ -1266,5 +1348,8 @@ static void draw(void){
   }
   ShowWindow(editor,visible?SW_SHOW:SW_HIDE);
  }
+#ifdef NATIVE_WASM_APP
+ draw_window_border();
+#endif
  native_pointer_frame();
 }

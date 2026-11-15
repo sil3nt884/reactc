@@ -218,7 +218,7 @@ static bool native_report_key(const MSG *message) {
 }
 
 static void native_enable_caption(HWND hwnd) {
-    if (!window_titlebar(get(snapshot, 1, "tree"))) return;
+    if (custom_window_frame || !window_titlebar(get(snapshot, 1, "tree"))) return;
     custom_window_frame = true;
     HMENU menu = GetMenu(hwnd);
     SetMenu(hwnd, NULL);

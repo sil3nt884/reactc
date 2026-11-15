@@ -105,6 +105,8 @@ jobs:
       - name: Build Linux package
         run: |
           export PATH="$PWD/tools/local/node-v22.16.0-linux-x64/bin:$PATH"
+          sh tools/install-wasmtime.sh linux
+          sh tools/install-wasmtime.sh windows
           node scripts/build-compiler.mjs --out dist/release/reactc-linux-x64 --smoke-native
       - name: Archives, libraries and checksums
         run: |
